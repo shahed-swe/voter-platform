@@ -8,6 +8,8 @@ import CanvassingPage from './pages/CanvassingPage.jsx';
 import AnalyticsPage from './pages/AnalyticsPage.jsx';
 import ElectionResultsPage from './pages/ElectionResultsPage.jsx';
 import AdminPage from './pages/AdminPage.jsx';
+import CandidatesListPage from './pages/admin/CandidatesListPage.jsx';
+import CreateCandidatePage from './pages/admin/CreateCandidatePage.jsx';
 import NotFoundPage from './pages/NotFoundPage.jsx';
 
 export default function App() {
@@ -32,6 +34,23 @@ export default function App() {
                     element={
                         <ProtectedRoute roles={['admin', 'sub_admin']}>
                             <AdminPage />
+                        </ProtectedRoute>
+                    }
+                />
+                {/* Super-admin tooling (candidate management) */}
+                <Route
+                    path="/admin/candidates"
+                    element={
+                        <ProtectedRoute requireSuperAdmin>
+                            <CandidatesListPage />
+                        </ProtectedRoute>
+                    }
+                />
+                <Route
+                    path="/admin/candidates/new"
+                    element={
+                        <ProtectedRoute requireSuperAdmin>
+                            <CreateCandidatePage />
                         </ProtectedRoute>
                     }
                 />

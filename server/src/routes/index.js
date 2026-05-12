@@ -1,6 +1,18 @@
 const router = require('express').Router();
+const { verifyToken } = require('../middleware/auth');
+const { scopeToCandidate } = require('../middleware/scope');
 
-router.use('/auth',        require('./authRoutes'));
+// Auth routes — public + already manage their own JWT.
+router.use('/auth', require('./authRoutes'));
+
+// Candidate management endpoints sit BEFORE the scope middleware because
+// they operate ACROSS candidates (super-admin tooling + the switcher API).
+// They require auth but not an active candidate context.
+router.use('/candidates', verifyToken, require('./candidateRoutes'));
+
+// Everything else requires authentication AND a candidate scope (set on req.candidateId).
+router.use(verifyToken, scopeToCandidate);
+
 router.use('/admin',       require('./adminRoutes'));
 router.use('/voters',      require('./voterRoutes'));
 router.use('/villages',    require('./villageRoutes'));
@@ -9,18 +21,7 @@ router.use('/media',       require('./mediaRoutes'));
 router.use('/analytics',   require('./analyticsRoutes'));
 router.use('/cache',       require('./cacheRoutes'));
 router.use('/geo',         require('./geoRoutes'));
-
-// Urban / constituency-style API (works for any tenant that loads wards/buildings)
 router.use('/urban',       require('./urbanRoutes'));
-
-// Tenant-prefixed legacy aliases — keep old clients working without changing URLs.
-const config = require('../config');
-const tenantPrefix = `/${config.tenant.id}`;
-router.use(`${tenantPrefix}/auth`,       require('./authRoutes'));
-router.use(`${tenantPrefix}/voters`,     require('./voterRoutes'));
-router.use(`${tenantPrefix}/villages`,   require('./villageRoutes'));
-router.use(`${tenantPrefix}/canvassing`, require('./canvassingRoutes'));
-router.use(`${tenantPrefix}/analytics`,  require('./analyticsRoutes'));
-router.use(`${tenantPrefix}`,            require('./urbanRoutes'));
+router.use('/filter-options', require('./filterOptionsRoutes'));
 
 module.exports = router;

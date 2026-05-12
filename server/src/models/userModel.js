@@ -1,7 +1,7 @@
 const { query, one, many } = require('../db/pool');
 
 const PUBLIC_FIELDS = `user_id, username, email, name, role, is_active, password_changed,
-                       phone, address, referred_by, created_at, updated_at`;
+                       is_super_admin, phone, address, referred_by, created_at, updated_at`;
 
 async function findById(userId) {
     return one(`SELECT ${PUBLIC_FIELDS} FROM users WHERE user_id = $1`, [userId]);
@@ -21,28 +21,40 @@ async function findByUsernameOrEmail(identifier) {
     );
 }
 
-async function list({ role, isActive, search, limit = 100, offset = 0 } = {}) {
-    const where = [];
-    const params = [];
+/**
+ * List users granted access to the given candidate. Returns the user + their
+ * per-candidate role from user_candidates.
+ */
+async function list(candidateId, { role, isActive, search, limit = 100, offset = 0 } = {}) {
+    const where = ['uc.candidate_id = $1'];
+    const params = [candidateId];
+
     if (role) {
         params.push(role);
-        where.push(`role = $${params.length}`);
+        where.push(`uc.role = $${params.length}`);
     }
     if (isActive !== undefined) {
         params.push(isActive);
-        where.push(`is_active = $${params.length}`);
+        where.push(`u.is_active = $${params.length}`);
     }
     if (search) {
         params.push(`%${search}%`);
         const i = params.length;
-        where.push(`(username ILIKE $${i} OR email ILIKE $${i} OR name ILIKE $${i})`);
+        where.push(`(u.username ILIKE $${i} OR u.email ILIKE $${i} OR u.name ILIKE $${i})`);
     }
     params.push(limit);
     params.push(offset);
-    const sql = `SELECT ${PUBLIC_FIELDS} FROM users
-                 ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-                 ORDER BY user_id DESC
-                 LIMIT $${params.length - 1} OFFSET $${params.length}`;
+
+    const sql = `
+        SELECT u.user_id, u.username, u.email, u.name, uc.role,
+               u.is_active, u.password_changed, u.is_super_admin,
+               u.phone, u.address, u.referred_by, u.created_at, u.updated_at
+          FROM user_candidates uc
+          JOIN users u ON u.user_id = uc.user_id
+          WHERE ${where.join(' AND ')}
+          ORDER BY u.user_id DESC
+          LIMIT $${params.length - 1} OFFSET $${params.length}
+    `;
     return many(sql, params);
 }
 

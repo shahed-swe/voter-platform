@@ -1,4 +1,5 @@
 // Returns GeoJSON FeatureCollections for the map layers.
+// All queries are scoped to a single candidate.
 const { many } = require('../db/pool');
 
 function rowsToFeatureCollection(rows, geomKey = 'geometry') {
@@ -13,12 +14,9 @@ function rowsToFeatureCollection(rows, geomKey = 'geometry') {
     };
 }
 
-/**
- * Villages with canvassing progress. Each feature is a polygon with stats in
- * properties (total_voters, visited, completion_pct). Used by the dashboard map.
- */
-async function villagesGeojson() {
-    const rows = await many(`
+async function villagesGeojson(candidateId) {
+    const rows = await many(
+        `
         SELECT vil.village_id, vil.village_name, vil.upazila,
                vil."union"                                                  AS union_name,
                vil.mauza, vil.total_population, vil.male_count, vil.female_count,
@@ -30,17 +28,19 @@ async function villagesGeojson() {
                    NULLIF(COUNT(v.voter_id), 0), 2
                )                                                             AS completion_pct
           FROM villages vil
-          LEFT JOIN voters v ON v.village_id = vil.village_id
-         GROUP BY vil.village_id
+          LEFT JOIN voters v ON v.village_id = vil.village_id AND v.candidate_id = $1
+         WHERE vil.candidate_id = $1
+         GROUP BY vil.candidate_id, vil.village_id
          ORDER BY vil.village_name
-    `);
+        `,
+        [candidateId]
+    );
     return rowsToFeatureCollection(rows);
 }
 
-/** Voter areas filtered by ward / union / mauza. */
-async function voterAreasGeojson({ wardId, unionName, mauzaName } = {}) {
-    const where = [];
-    const params = [];
+async function voterAreasGeojson(candidateId, { wardId, unionName, mauzaName } = {}) {
+    const where = ['va.candidate_id = $1'];
+    const params = [candidateId];
     if (wardId)    { params.push(wardId);    where.push(`va.ward_id = $${params.length}`); }
     if (unionName) { params.push(unionName); where.push(`va.union_name = $${params.length}`); }
     if (mauzaName) { params.push(mauzaName); where.push(`va.mauza_name = $${params.length}`); }
@@ -52,8 +52,8 @@ async function voterAreasGeojson({ wardId, unionName, mauzaName } = {}) {
                va.male_count, va.female_count, va.geometry,
                COUNT(b.building_id) AS building_count
           FROM voter_areas va
-          LEFT JOIN buildings b ON b.voter_area_id = va.voter_area_id
-        ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+          LEFT JOIN buildings b ON b.voter_area_id = va.voter_area_id AND b.candidate_id = $1
+         WHERE ${where.join(' AND ')}
          GROUP BY va.voter_area_id
          ORDER BY va.total_population DESC NULLS LAST
         `,
@@ -62,8 +62,7 @@ async function voterAreasGeojson({ wardId, unionName, mauzaName } = {}) {
     return rowsToFeatureCollection(rows);
 }
 
-/** Buildings (polygons) inside a voter area. */
-async function buildingsGeojson(voterAreaId) {
+async function buildingsGeojson(candidateId, voterAreaId) {
     const rows = await many(
         `
         SELECT b.building_id, b.voter_area_id, b.osm_id, b.address,
@@ -71,24 +70,32 @@ async function buildingsGeojson(voterAreaId) {
                b.building_name, b.floor_number, b.flat_number, b.geometry,
                va.bangla_voter_area_name AS voter_area_name,
                va.village_name           AS voter_area_village,
-               EXISTS (SELECT 1 FROM canvassing c WHERE c.building_id = b.building_id) AS canvassed
+               EXISTS (
+                 SELECT 1 FROM canvassing c
+                  WHERE c.building_id = b.building_id AND c.candidate_id = $1
+               ) AS canvassed
           FROM buildings b
-          LEFT JOIN voter_areas va ON va.voter_area_id = b.voter_area_id
-         WHERE b.voter_area_id = $1
+          LEFT JOIN voter_areas va
+            ON va.voter_area_id = b.voter_area_id AND va.candidate_id = $1
+         WHERE b.candidate_id = $1
+           AND b.voter_area_id = $2
         `,
-        [voterAreaId]
+        [candidateId, voterAreaId]
     );
     return rowsToFeatureCollection(rows);
 }
 
-/** Wards (polygons) for a ward-overview view. */
-async function wardsGeojson() {
-    const rows = await many(`
+async function wardsGeojson(candidateId) {
+    const rows = await many(
+        `
         SELECT w.ward_id, w.constituency_id, w.ward_number, w.union_name,
                w.total_population, w.male_count, w.female_count, w.geometry
           FROM wards w
+         WHERE w.candidate_id = $1
          ORDER BY w.ward_number
-    `);
+        `,
+        [candidateId]
+    );
     return rowsToFeatureCollection(rows);
 }
 

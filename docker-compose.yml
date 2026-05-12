@@ -12,6 +12,10 @@ services:
             - "${POSTGRES_PORT:-5432}:5432"
         volumes:
             - pgdata:/var/lib/postgresql/data
+            # On first init only, runs .sql files in this folder. Creates
+            # the multi-tenant DB (voter_platform_mt) so `migrate` can run
+            # without any manual bootstrap step.
+            - ./postgres-init:/docker-entrypoint-initdb.d:ro
         healthcheck:
             test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-voter} -d ${POSTGRES_DB:-voter_platform}"]
             interval: 5s
@@ -26,7 +30,7 @@ services:
             postgres:
                 condition: service_healthy
         environment:
-            DATABASE_URL: postgres://${POSTGRES_USER:-voter}:${POSTGRES_PASSWORD:-voter}@postgres:5432/${POSTGRES_DB:-voter_platform}
+            DATABASE_URL: postgres://${POSTGRES_USER:-voter}:${POSTGRES_PASSWORD:-voter}@postgres:5432/${APP_DATABASE:-voter_platform_mt}
         command: ["node", "src/db/migrate.js", "up"]
         restart: "no"
 
@@ -44,7 +48,7 @@ services:
             TENANT_ID: ${TENANT_ID:-dhaka13}
             TENANT_NAME: ${TENANT_NAME:-Voter Survey Platform}
             TENANT_PUBLIC_URL: ${TENANT_PUBLIC_URL:-http://localhost:3000}
-            DATABASE_URL: postgres://${POSTGRES_USER:-voter}:${POSTGRES_PASSWORD:-voter}@postgres:5432/${POSTGRES_DB:-voter_platform}
+            DATABASE_URL: postgres://${POSTGRES_USER:-voter}:${POSTGRES_PASSWORD:-voter}@postgres:5432/${APP_DATABASE:-voter_platform_mt}
             JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
             JWT_EXPIRY: ${JWT_EXPIRY:-7d}
             BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-10}

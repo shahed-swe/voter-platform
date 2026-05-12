@@ -31,10 +31,16 @@
 const { Pool } = require('pg');
 require('dotenv').config();
 
-const SOURCE_URL = process.env.SOURCE_DATABASE_URL;
-const TARGET_URL = process.env.DATABASE_URL;
-const BATCH      = parseInt(process.env.IMPORT_BATCH_SIZE || '1000', 10);
-const TRUNCATE   = (process.env.IMPORT_TRUNCATE || 'true') !== 'false';
+const SOURCE_URL   = process.env.SOURCE_DATABASE_URL;
+const TARGET_URL   = process.env.DATABASE_URL;
+const BATCH        = parseInt(process.env.IMPORT_BATCH_SIZE || '1000', 10);
+const TRUNCATE     = (process.env.IMPORT_TRUNCATE || 'true') !== 'false';
+const CANDIDATE_ID = process.env.CANDIDATE_ID || null;
+// Reassign source numeric IDs so a second/third candidate's data doesn't
+// collide with existing IDs in the target. Default OFF (preserves IDs) so
+// the FIRST candidate's data keeps its FKs intact. Set REASSIGN_IDS=true
+// when importing a SECOND tenant into a target that already has data.
+const REASSIGN_IDS = process.env.REASSIGN_IDS === 'true';
 // Optional comma-separated whitelist of tables to import. If set, only those
 // tables run (truncates and copies are scoped to them).
 const ONLY_TABLES = (process.env.IMPORT_TABLES || '')
@@ -46,6 +52,27 @@ if (!SOURCE_URL || !TARGET_URL) {
     console.error('SOURCE_DATABASE_URL and DATABASE_URL are required.');
     process.exit(1);
 }
+
+// Auto-increment columns we should NOT carry over — let the target's
+// BIGSERIAL assign fresh values to avoid cross-candidate PK collisions.
+// NOTE: Because we re-allocate IDs, tables that reference these IDs (e.g.
+// canvassing → voter_id, voter_village_mapping → voter_id) would need a
+// remap table during import. For panchagar this isn't an issue because
+// the source has 0 rows in those tables. For tenants with canvassing data
+// already, build a translation map (todo: phase 9 wizard handles this).
+const SKIP_SOURCE_IDS = new Set([
+    'voters.voter_id',
+    'voter_areas.voter_area_id',   // (TEXT in our schema, but legacy source may use INT)
+    'wards.ward_id',
+    'buildings.building_id',
+    'polling_stations.polling_station_id',
+    'canvassing.canvass_id',
+    'media_files.media_id',
+    'user_assignments.assignment_id',
+    'voter_village_mapping.mapping_id',
+    'audit_logs.log_id',
+    'users.user_id',
+]);
 
 // Tables we know how to import, in dependency order. Each entry is the
 // target table name; columns are auto-detected as the intersection of
@@ -71,10 +98,15 @@ const PLAN = [
 // Columns that need a SELECT-side transformation when reading from staging.
 // Key is "<table>.<source-column-name>". The read expression replaces the
 // column in the SELECT; the column is INSERTed into the same-named target col.
+//
+// Auto-handles two cases:
+//   • PostGIS `geometry` column         → ST_AsGeoJSON(geometry)::jsonb
+//   • Plain TEXT JSON `geometry` column → geometry::jsonb
+// Run-time inspection chooses the right one (see resolveReadExpr below).
 const READ_TRANSFORMS = {
-    'villages.geometry':    'CASE WHEN geometry IS NULL THEN NULL ELSE ST_AsGeoJSON(geometry)::jsonb END',
-    'voter_areas.geometry': 'CASE WHEN geometry IS NULL THEN NULL ELSE ST_AsGeoJSON(geometry)::jsonb END',
-    'wards.geometry':       'CASE WHEN geometry IS NULL THEN NULL ELSE ST_AsGeoJSON(geometry)::jsonb END',
+    'villages.geometry':    'GEOM_OR_JSON',
+    'voter_areas.geometry': 'GEOM_OR_JSON',
+    'wards.geometry':       'GEOM_OR_JSON',
 };
 
 // "Synthetic" target columns — read from a source column / expression but
@@ -100,7 +132,16 @@ async function columnsOf(pool, table) {
 
 function readExpr(table, col) {
     const key = `${table}.${col.column_name}`;
-    if (READ_TRANSFORMS[key]) return `${READ_TRANSFORMS[key]} AS "${col.column_name}"`;
+    const t = READ_TRANSFORMS[key];
+    if (t === 'GEOM_OR_JSON') {
+        const expr = col.data_type === 'text'
+            // SQLite-derived dumps: geometry is a GeoJSON string in TEXT
+            ? `CASE WHEN "${col.column_name}" IS NULL THEN NULL ELSE "${col.column_name}"::jsonb END`
+            // PostGIS dumps: geometry is a PostGIS geometry type
+            : `CASE WHEN "${col.column_name}" IS NULL THEN NULL ELSE ST_AsGeoJSON("${col.column_name}")::jsonb END`;
+        return `${expr} AS "${col.column_name}"`;
+    }
+    if (t) return `${t} AS "${col.column_name}"`;
     // Quote identifier in case it's reserved (e.g. "union")
     return `"${col.column_name}"`;
 }
@@ -125,7 +166,14 @@ async function importTable(table) {
 
     const targetColSet = new Set(targetCols.map((c) => c.column_name));
     const sourceColSet = new Set(sourceCols.map((c) => c.column_name));
-    const shared = sourceCols.filter((c) => targetColSet.has(c.column_name));
+
+    // Filter out source IDs that should be re-assigned by the target's
+    // BIGSERIAL (to avoid cross-candidate PK collisions in MT mode).
+    const shared = sourceCols.filter((c) => {
+        if (!targetColSet.has(c.column_name)) return false;
+        if (REASSIGN_IDS && SKIP_SOURCE_IDS.has(`${table}.${c.column_name}`)) return false;
+        return true;
+    });
 
     // Add synthetic columns (source has different column name, e.g. `geom`)
     const synthetic = [];
@@ -138,7 +186,10 @@ async function importTable(table) {
         synthetic.push({ targetCol, sourceExpr: def.sourceExpr });
     }
 
-    if (shared.length === 0 && synthetic.length === 0) {
+    // Stamp candidate_id on every row (literal value, not from source)
+    const stampCandidate = CANDIDATE_ID && targetColSet.has('candidate_id');
+
+    if (shared.length === 0 && synthetic.length === 0 && !stampCandidate) {
         console.log(`[skip] ${table} — no shared columns`);
         return;
     }
@@ -158,6 +209,8 @@ async function importTable(table) {
         ...shared.map((c) => c.column_name),
         ...synthetic.map((s) => s.targetCol),
     ];
+    // Tail-append candidate_id as a stamped literal (not pulled from source).
+    if (stampCandidate) allCols.push('candidate_id');
     const colList = allCols.map((c) => `"${c}"`).join(', ');
 
     let offset = 0;
@@ -176,7 +229,13 @@ async function importTable(table) {
         const placeholders = rows
             .map((row, i) => {
                 const ph = allCols.map((_, j) => `$${i * colCount + j + 1}`).join(', ');
-                allCols.forEach((col) => values.push(row[col]));
+                allCols.forEach((col) => {
+                    if (col === 'candidate_id' && stampCandidate) {
+                        values.push(CANDIDATE_ID);
+                    } else {
+                        values.push(row[col]);
+                    }
+                });
                 return `(${ph})`;
             })
             .join(', ');
@@ -198,12 +257,29 @@ async function truncateTargets() {
     if (!TRUNCATE) return;
     const list = ONLY_TABLES.length ? ONLY_TABLES : PLAN;
     const order = [...list].reverse(); // delete children before parents
-    console.log('[truncate] clearing target tables (set IMPORT_TRUNCATE=false to skip)');
-    for (const t of order) {
-        try {
-            await target.query(`TRUNCATE TABLE "${t}" RESTART IDENTITY CASCADE`);
-        } catch (err) {
-            console.warn(`  ${t}: ${err.message}`);
+
+    if (CANDIDATE_ID) {
+        // Scoped delete — only this candidate's rows, don't wipe other tenants.
+        console.log(`[truncate] deleting ${CANDIDATE_ID} rows from target tables`);
+        for (const t of order) {
+            try {
+                const { rowCount } = await target.query(
+                    `DELETE FROM "${t}" WHERE candidate_id = $1`,
+                    [CANDIDATE_ID]
+                );
+                if (rowCount) console.log(`  ${t}: ${rowCount} deleted`);
+            } catch (err) {
+                console.warn(`  ${t}: ${err.message}`);
+            }
+        }
+    } else {
+        console.log('[truncate] clearing target tables (set IMPORT_TRUNCATE=false to skip)');
+        for (const t of order) {
+            try {
+                await target.query(`TRUNCATE TABLE "${t}" RESTART IDENTITY CASCADE`);
+            } catch (err) {
+                console.warn(`  ${t}: ${err.message}`);
+            }
         }
     }
 }

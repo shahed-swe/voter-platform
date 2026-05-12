@@ -1,64 +1,69 @@
 const { one, many } = require('../db/pool');
 
-async function findById(voterId) {
-    return one(`SELECT * FROM voters WHERE voter_id = $1`, [voterId]);
+// Every function takes `candidateId` as its first parameter and adds it to
+// the WHERE clause. Forgetting to pass it would mean a row from the wrong
+// candidate could be read — that's the boundary we're enforcing.
+
+async function findById(candidateId, voterId) {
+    return one(
+        `SELECT * FROM voters WHERE candidate_id = $1 AND voter_id = $2`,
+        [candidateId, voterId]
+    );
 }
 
-async function findBySosVid(sosVid) {
-    return one(`SELECT * FROM voters WHERE sos_vid = $1`, [sosVid]);
+async function findBySosVid(candidateId, sosVid) {
+    return one(
+        `SELECT * FROM voters WHERE candidate_id = $1 AND sos_vid = $2`,
+        [candidateId, sosVid]
+    );
 }
 
-async function search(query, { limit = 50 } = {}) {
+async function search(candidateId, query, { limit = 50 } = {}) {
     return many(
         `SELECT voter_id, sos_vid, name, father_husband, age, gender, ward,
                 voter_area_name, village_csv, village_id, status
            FROM voters
-          WHERE name ILIKE $1
-             OR sos_vid ILIKE $1
-             OR father_husband ILIKE $1
+          WHERE candidate_id = $1
+            AND (name ILIKE $2 OR sos_vid ILIKE $2 OR father_husband ILIKE $2)
           ORDER BY name
-          LIMIT $2`,
-        [`%${query}%`, limit]
+          LIMIT $3`,
+        [candidateId, `%${query}%`, limit]
     );
 }
 
-async function byVillage(villageId, { limit = 1000, offset = 0 } = {}) {
+async function byVillage(candidateId, villageId, { limit = 1000, offset = 0 } = {}) {
     return many(
         `SELECT voter_id, sos_vid, name, father_husband, mother, age, gender, ward,
                 voter_area_name, status, address
            FROM voters
-          WHERE village_id = $1
+          WHERE candidate_id = $1 AND village_id = $2
           ORDER BY name
-          LIMIT $2 OFFSET $3`,
-        [villageId, limit, offset]
+          LIMIT $3 OFFSET $4`,
+        [candidateId, villageId, limit, offset]
     );
 }
 
-async function byVoterArea(voterArea, { limit = 1000, offset = 0 } = {}) {
+async function byVoterArea(candidateId, voterArea, { limit = 1000, offset = 0 } = {}) {
     return many(
         `SELECT voter_id, sos_vid, name, father_husband, age, gender, ward,
                 voter_area_name, status, address
            FROM voters
-          WHERE COALESCE(clean_voter_area, voter_area_name) = $1
+          WHERE candidate_id = $1
+            AND COALESCE(clean_voter_area, voter_area_name) = $2
           ORDER BY name
-          LIMIT $2 OFFSET $3`,
-        [voterArea, limit, offset]
+          LIMIT $3 OFFSET $4`,
+        [candidateId, voterArea, limit, offset]
     );
 }
 
-/**
- * Multi-area voter query for the canvassing voter list panel.
- * `areas` is an array of bangla_voter_area_name strings that match
- * voters.voter_area_name. Returns matching voters + status stats.
- */
-async function byVoterAreas({ areas, status, search, limit = 500, offset = 0 } = {}) {
+async function byVoterAreas(candidateId, { areas, status, search, limit = 500, offset = 0 } = {}) {
     if (!areas?.length) {
         return { voters: [], stats: { total: 0, visited: 0, not_visited: 0, follow_up: 0 } };
     }
 
-    const where = [`v.voter_area_name = ANY($1)`];
-    const params = [areas];
-    let i = 2;
+    const where = [`v.candidate_id = $1`, `v.voter_area_name = ANY($2)`];
+    const params = [candidateId, areas];
+    let i = 3;
 
     if (status) {
         where.push(`v.status = $${i++}`);
@@ -76,7 +81,10 @@ async function byVoterAreas({ areas, status, search, limit = 500, offset = 0 } =
         many(
             `SELECT v.voter_id, v.sos_vid, v.name, v.father_husband, v.age, v.gender,
                     v.ward, v.voter_area_name, v.address, v.status,
-                    EXISTS (SELECT 1 FROM canvassing c WHERE c.voter_id = v.voter_id) AS has_canvass
+                    EXISTS (
+                        SELECT 1 FROM canvassing c
+                         WHERE c.voter_id = v.voter_id AND c.candidate_id = $1
+                    ) AS has_canvass
                FROM voters v
                ${whereSql}
                ORDER BY v.name
@@ -90,53 +98,149 @@ async function byVoterAreas({ areas, status, search, limit = 500, offset = 0 } =
                 COUNT(*) FILTER (WHERE v.status = 'Not visited')::int      AS not_visited,
                 COUNT(*) FILTER (WHERE v.status = 'Follow-up needed')::int AS follow_up
                FROM voters v
-               WHERE v.voter_area_name = ANY($1)`,
-            [areas]
+               WHERE v.candidate_id = $1 AND v.voter_area_name = ANY($2)`,
+            [candidateId, areas]
         ),
     ]);
 
     return { voters, stats };
 }
 
-async function listVoterAreas() {
+async function listVoterAreas(candidateId) {
     return many(
         `SELECT DISTINCT clean_voter_area AS voter_area, COUNT(*) AS voter_count
            FROM voters
-          WHERE clean_voter_area IS NOT NULL
+          WHERE candidate_id = $1 AND clean_voter_area IS NOT NULL
           GROUP BY clean_voter_area
-          ORDER BY clean_voter_area`
+          ORDER BY clean_voter_area`,
+        [candidateId]
     );
 }
 
-async function voterAreaStats(voterArea) {
+async function voterAreaStats(candidateId, voterArea) {
     return one(
         `SELECT COUNT(*) AS total_voters,
                 COUNT(*) FILTER (WHERE status = 'Visited') AS visited,
                 COUNT(*) FILTER (WHERE gender = 'Male')    AS male,
                 COUNT(*) FILTER (WHERE gender = 'Female')  AS female
            FROM voters
-          WHERE clean_voter_area = $1`,
-        [voterArea]
+          WHERE candidate_id = $1
+            AND COALESCE(clean_voter_area, voter_area_name) = $2`,
+        [candidateId, voterArea]
     );
 }
 
-async function aggregatedStatistics({ groupBy = 'union' } = {}) {
-    const allowed = { upazila: 'upazila', union: '"union"', mauza: 'NULL', voter_area: 'clean_voter_area' };
+async function aggregatedStatistics(candidateId, { groupBy = 'union' } = {}) {
+    const allowed = { upazila: 'upazila', union: '"union"', voter_area: 'clean_voter_area' };
     const expr = allowed[groupBy] || '"union"';
-    return many(`
-        SELECT ${expr} AS name,
-               COUNT(*) AS total_voters,
-               COUNT(*) FILTER (WHERE status = 'Visited') AS visited,
-               COUNT(*) FILTER (WHERE gender = 'Male')   AS male,
-               COUNT(*) FILTER (WHERE gender = 'Female') AS female
-          FROM voters
-         GROUP BY ${expr}
-         ORDER BY name
-    `);
+    return many(
+        `SELECT ${expr} AS name,
+                COUNT(*) AS total_voters,
+                COUNT(*) FILTER (WHERE status = 'Visited') AS visited,
+                COUNT(*) FILTER (WHERE gender = 'Male')   AS male,
+                COUNT(*) FILTER (WHERE gender = 'Female') AS female
+           FROM voters
+          WHERE candidate_id = $1
+          GROUP BY ${expr}
+          ORDER BY name`,
+        [candidateId]
+    );
 }
 
-async function markVisited(voterId) {
-    await one(`UPDATE voters SET status = 'Visited', updated_at = NOW() WHERE voter_id = $1 RETURNING voter_id`, [voterId]);
+async function markVisited(candidateId, voterId) {
+    await one(
+        `UPDATE voters
+            SET status = 'Visited', updated_at = NOW()
+          WHERE candidate_id = $1 AND voter_id = $2
+       RETURNING voter_id`,
+        [candidateId, voterId]
+    );
+}
+
+/**
+ * Generic voter filter — accepts a `filters` map keyed by the candidate's
+ * filter_config keys. Each key resolves to one of:
+ *   • a column on voters (direct match)
+ *   • a column on villages (we join via voters.village_id)
+ * The villages-side fields are used as the canonical "English" source of
+ * truth — voters.upazila / "union" in panchagar are sometimes stored in
+ * Bengali and don't match the values returned by /api/filter-options.
+ */
+const FILTERS = {
+    upazila:    { via: 'villages',  col: 'upazila' },
+    union:      { via: 'villages',  col: 'union'   },
+    mauza:      { via: 'villages',  col: 'mauza'   },
+    village:    { via: 'voters',    col: 'village_id' },
+    voter_area: { via: 'voters',    col: 'voter_area_name' },
+    ward:       { via: 'voters',    col: 'ward' },          // dhaka13 voters store ward_number
+};
+
+async function findByFilters(candidateId, { filters = {}, status, search, limit = 500, offset = 0 } = {}) {
+    const where  = ['v.candidate_id = $1'];
+    const params = [candidateId];
+    let i = 2;
+
+    for (const [key, value] of Object.entries(filters || {})) {
+        const empty = value == null || value === '' || (Array.isArray(value) && value.length === 0);
+        if (empty) continue;
+
+        const spec = FILTERS[key];
+        if (!spec) continue;     // unknown key — controller should already have rejected
+        const arr = Array.isArray(value) ? value : [value];
+
+        if (spec.via === 'voters') {
+            params.push(arr);
+            const col = spec.col === 'union' ? `v."union"` : `v.${spec.col}`;
+            where.push(`${col} = ANY($${i++})`);
+        } else {
+            // villages-side: filter voter.village_id by a subquery on villages
+            params.push(arr);
+            const col = spec.col === 'union' ? `"union"` : spec.col;
+            where.push(
+                `v.village_id IN (SELECT village_id FROM villages
+                                   WHERE candidate_id = $1 AND ${col} = ANY($${i}))`
+            );
+            i++;
+        }
+    }
+
+    if (status) {
+        params.push(status);
+        where.push(`v.status = $${i++}`);
+    }
+    if (search) {
+        params.push(`%${search}%`);
+        where.push(`(v.name ILIKE $${i} OR v.sos_vid ILIKE $${i} OR v.address ILIKE $${i})`);
+        i++;
+    }
+
+    const whereSql = `WHERE ${where.join(' AND ')}`;
+
+    const [voters, stats] = await Promise.all([
+        many(
+            `SELECT v.voter_id, v.sos_vid, v.name, v.father_husband, v.age, v.gender,
+                    v.ward, v.voter_area_name, v.address, v.status,
+                    EXISTS (
+                        SELECT 1 FROM canvassing c
+                         WHERE c.voter_id = v.voter_id AND c.candidate_id = $1
+                    ) AS has_canvass
+               FROM voters v
+               ${whereSql}
+               ORDER BY v.name
+               LIMIT $${i} OFFSET $${i + 1}`,
+            [...params, limit, offset]
+        ),
+        one(
+            `SELECT COUNT(*)::int                                              AS total,
+                    COUNT(*) FILTER (WHERE v.status = 'Visited')::int          AS visited,
+                    COUNT(*) FILTER (WHERE v.status = 'Not visited')::int      AS not_visited,
+                    COUNT(*) FILTER (WHERE v.status = 'Follow-up needed')::int AS follow_up
+               FROM voters v ${whereSql}`,
+            params
+        ),
+    ]);
+
+    return { voters, stats };
 }
 
 module.exports = {
@@ -146,6 +250,7 @@ module.exports = {
     byVillage,
     byVoterArea,
     byVoterAreas,
+    findByFilters,
     listVoterAreas,
     voterAreaStats,
     aggregatedStatistics,

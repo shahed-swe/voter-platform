@@ -1,15 +1,21 @@
 const voterModel = require('../models/voterModel');
-const { NotFoundError } = require('../utils/errors');
+const candidateModel = require('../models/candidateModel');
+const { NotFoundError, ForbiddenError, ValidationError } = require('../utils/errors');
+
+function tenant(req) {
+    if (!req.candidateId) throw new ForbiddenError('No candidate selected');
+    return req.candidateId;
+}
 
 async function getById(req, res) {
-    const voter = await voterModel.findById(req.params.voter_id);
+    const voter = await voterModel.findById(tenant(req), req.params.voter_id);
     if (!voter) throw new NotFoundError('Voter not found');
     res.json({ success: true, voter });
 }
 
 async function search(req, res) {
     const limit = req.query.limit ? parseInt(req.query.limit, 10) : 50;
-    const voters = await voterModel.search(req.params.query, { limit });
+    const voters = await voterModel.search(tenant(req), req.params.query, { limit });
     res.json({ success: true, voters });
 }
 
@@ -17,12 +23,12 @@ async function byVillage(req, res) {
     const { village_id } = req.params;
     const limit = req.query.limit ? parseInt(req.query.limit, 10) : 1000;
     const offset = req.query.offset ? parseInt(req.query.offset, 10) : 0;
-    const voters = await voterModel.byVillage(village_id, { limit, offset });
+    const voters = await voterModel.byVillage(tenant(req), village_id, { limit, offset });
     res.json({ success: true, voters });
 }
 
 async function byVoterArea(req, res) {
-    const voters = await voterModel.byVoterArea(req.params.voter_area, {
+    const voters = await voterModel.byVoterArea(tenant(req), req.params.voter_area, {
         limit: parseInt(req.query.limit || 1000, 10),
         offset: parseInt(req.query.offset || 0, 10),
     });
@@ -31,7 +37,7 @@ async function byVoterArea(req, res) {
 
 async function byVoterAreas(req, res) {
     const { areas = [], status, search, limit, offset } = req.body || {};
-    const result = await voterModel.byVoterAreas({
+    const result = await voterModel.byVoterAreas(tenant(req), {
         areas,
         status,
         search,
@@ -41,20 +47,48 @@ async function byVoterAreas(req, res) {
     res.json({ success: true, ...result });
 }
 
-async function listVoterAreas(_req, res) {
-    const areas = await voterModel.listVoterAreas();
-    res.json({ success: true, voter_areas: areas });
+async function listVoterAreas(req, res) {
+    res.json({ success: true, voter_areas: await voterModel.listVoterAreas(tenant(req)) });
 }
 
 async function voterAreaStats(req, res) {
-    const stats = await voterModel.voterAreaStats(req.params.voter_area);
+    const stats = await voterModel.voterAreaStats(tenant(req), req.params.voter_area);
     res.json({ success: true, stats });
 }
 
 async function aggregatedStats(req, res) {
     const groupBy = req.body?.group_by || 'union';
-    const stats = await voterModel.aggregatedStatistics({ groupBy });
+    const stats = await voterModel.aggregatedStatistics(tenant(req), { groupBy });
     res.json({ success: true, stats });
+}
+
+/**
+ * POST /api/voters/filtered
+ *   Body: { filters: { upazila: [...], union: ['X'], mauza: 'Y', ... }, status, search, limit, offset }
+ * Filter keys are validated against the candidate's filter_config so callers
+ * can only filter by attributes the candidate is configured for.
+ */
+async function filtered(req, res) {
+    const candidateId = tenant(req);
+    const { filters = {}, status, search, limit, offset } = req.body || {};
+
+    // Validate keys against candidate.filter_config
+    const candidate = await candidateModel.findById(candidateId);
+    const allowed = new Set((candidate?.filter_config || []).map((f) => f.key));
+    for (const key of Object.keys(filters)) {
+        if (!allowed.has(key)) {
+            throw new ValidationError(`Filter '${key}' is not configured for this candidate`);
+        }
+    }
+
+    const result = await voterModel.findByFilters(candidateId, {
+        filters,
+        status,
+        search,
+        limit: limit ? Math.min(parseInt(limit, 10) || 500, 2000) : 500,
+        offset: offset ? parseInt(offset, 10) : 0,
+    });
+    res.json({ success: true, ...result });
 }
 
 module.exports = {
@@ -63,6 +97,7 @@ module.exports = {
     byVillage,
     byVoterArea,
     byVoterAreas,
+    filtered,
     listVoterAreas,
     voterAreaStats,
     aggregatedStats,

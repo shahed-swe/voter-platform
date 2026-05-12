@@ -1,21 +1,35 @@
 const userModel = require('../models/userModel');
 const assignmentModel = require('../models/assignmentModel');
 const villageModel = require('../models/villageModel');
+const candidateModel = require('../models/candidateModel');
 const { hashPassword, generateTempPassword } = require('../utils/password');
 const notificationService = require('../services/notificationService');
 const { ValidationError, NotFoundError, ForbiddenError } = require('../utils/errors');
 
-function ensureCanManageUsers(actor) {
-    if (!actor) throw new ForbiddenError();
-    if (actor.role !== 'admin' && actor.role !== 'sub_admin') {
+function tenant(req) {
+    if (!req.candidateId) throw new ForbiddenError('No candidate selected');
+    return req.candidateId;
+}
+
+// The actor's role within the current candidate (from JWT.candidates array).
+function actorRole(req) {
+    const t = req.candidateId;
+    const grant = (req.user?.candidates || []).find((c) => c.id === t);
+    if (req.user?.is_super_admin) return 'admin';
+    return grant?.role || null;
+}
+
+function ensureCanManageUsers(req) {
+    const role = actorRole(req);
+    if (role !== 'admin' && role !== 'sub_admin') {
         throw new ForbiddenError('Only admins/sub-admins can manage users');
     }
 }
 
 async function listUsers(req, res) {
-    ensureCanManageUsers(req.user);
+    ensureCanManageUsers(req);
     const { role, is_active, search, limit, offset } = req.query;
-    const users = await userModel.list({
+    const users = await userModel.list(tenant(req), {
         role,
         isActive: is_active == null ? undefined : is_active === 'true',
         search,
@@ -26,7 +40,7 @@ async function listUsers(req, res) {
 }
 
 async function createUser(req, res) {
-    ensureCanManageUsers(req.user);
+    ensureCanManageUsers(req);
     const { username, email, name, role, phone, address } = req.body || {};
     if (!username || !email || !name || !role) {
         throw new ValidationError('username, email, name, role are required');
@@ -34,7 +48,7 @@ async function createUser(req, res) {
     if (!['admin', 'sub_admin', 'volunteer'].includes(role)) {
         throw new ValidationError('Invalid role');
     }
-    if (req.user.role === 'sub_admin' && role === 'admin') {
+    if (actorRole(req) === 'sub_admin' && role === 'admin') {
         throw new ForbiddenError('Sub-admins cannot create admins');
     }
 
@@ -46,35 +60,34 @@ async function createUser(req, res) {
         email,
         name,
         passwordHash,
-        role,
+        role,        // legacy global "role" — kept for compatibility
         phone,
         address,
         referredBy: req.user.user_id,
     });
 
-    // Fire-and-forget notifications; the response shouldn't block on email/SMS.
+    // Grant the user access to the current candidate with the requested role
+    await candidateModel.grantUserAccess({
+        userId: user.user_id,
+        candidateId: tenant(req),
+        role,
+        grantedBy: req.user.user_id,
+    });
+
     notificationService
-        .notifyWelcome({
-            email,
-            phone,
-            name,
-            username,
-            tempPassword,
-            role,
-            address,
-        })
+        .notifyWelcome({ email, phone, name, username, tempPassword, role, address })
         .catch((err) => console.error('[notify] welcome failed:', err.message));
 
     res.status(201).json({
         success: true,
         user,
         temp_password: tempPassword,
-        message: 'User created. Welcome credentials have been queued.',
+        message: 'User created and granted access to current candidate.',
     });
 }
 
 async function updateUser(req, res) {
-    ensureCanManageUsers(req.user);
+    ensureCanManageUsers(req);
     const userId = parseInt(req.params.user_id, 10);
     const user = await userModel.update(userId, req.body || {});
     if (!user) throw new NotFoundError('User not found');
@@ -88,7 +101,7 @@ async function changePassword(req, res) {
     if (!new_password) throw new ValidationError('new_password is required');
 
     const isSelf = req.user.user_id === userId;
-    if (!isSelf) ensureCanManageUsers(req.user);
+    if (!isSelf) ensureCanManageUsers(req);
 
     if (isSelf && current_password) {
         const full = await userModel.findByUsername(req.user.username);
@@ -104,7 +117,7 @@ async function changePassword(req, res) {
 }
 
 async function changeUsername(req, res) {
-    ensureCanManageUsers(req.user);
+    ensureCanManageUsers(req);
     const userId = parseInt(req.params.user_id, 10);
     const { username } = req.body || {};
     if (!username) throw new ValidationError('username is required');
@@ -114,11 +127,13 @@ async function changeUsername(req, res) {
 }
 
 async function deleteUser(req, res) {
-    if (req.user.role !== 'admin') throw new ForbiddenError('Only admins can delete users');
+    if (actorRole(req) !== 'admin') throw new ForbiddenError('Only admins can delete users');
     const userId = parseInt(req.params.user_id, 10);
     if (userId === req.user.user_id) throw new ForbiddenError('Cannot delete self');
-    const removed = await userModel.remove(userId);
-    if (!removed) throw new NotFoundError('User not found');
+    // Within MT: revoke access to current candidate. We don't actually delete
+    // the user row (they may have access to other candidates).
+    const ok = await candidateModel.revokeUserAccess(userId, tenant(req));
+    if (!ok) throw new NotFoundError('User not found in this candidate');
     res.json({ success: true });
 }
 
@@ -126,19 +141,19 @@ async function deleteUser(req, res) {
 
 async function listAssignmentsForUser(req, res) {
     const userId = parseInt(req.params.user_id, 10);
-    const assignments = await assignmentModel.listForUser(userId);
+    const assignments = await assignmentModel.listForUser(tenant(req), userId);
     res.json({ success: true, assignments });
 }
 
 async function createAssignment(req, res) {
-    ensureCanManageUsers(req.user);
+    ensureCanManageUsers(req);
     const userId = parseInt(req.params.user_id, 10);
     const { assignment_type, assignment_value, village_id, notes } = req.body || {};
     if (!assignment_type || !assignment_value) {
         throw new ValidationError('assignment_type and assignment_value are required');
     }
 
-    const assignment = await assignmentModel.create({
+    const assignment = await assignmentModel.create(tenant(req), {
         userId,
         assignedBy: req.user.user_id,
         type: assignment_type,
@@ -149,7 +164,7 @@ async function createAssignment(req, res) {
 
     const user = await userModel.findById(userId);
     let areaDetails = null;
-    if (village_id) areaDetails = await villageModel.findById(village_id);
+    if (village_id) areaDetails = await villageModel.findById(tenant(req), village_id);
 
     if (user) {
         notificationService
@@ -169,17 +184,19 @@ async function createAssignment(req, res) {
 }
 
 async function deleteAssignment(req, res) {
-    ensureCanManageUsers(req.user);
+    ensureCanManageUsers(req);
     const userId = parseInt(req.params.user_id, 10);
     const assignmentId = parseInt(req.params.assignment_id, 10);
-    const ok = await assignmentModel.removeOne(assignmentId, userId);
+    const ok = await assignmentModel.removeOne(tenant(req), assignmentId, userId);
     if (!ok) throw new NotFoundError('Assignment not found');
     res.json({ success: true });
 }
 
 async function listAllAssignments(req, res) {
-    ensureCanManageUsers(req.user);
-    const assignments = await assignmentModel.listAll({ assignmentType: req.query.assignment_type });
+    ensureCanManageUsers(req);
+    const assignments = await assignmentModel.listAll(tenant(req), {
+        assignmentType: req.query.assignment_type,
+    });
     res.json({ success: true, assignments });
 }
 

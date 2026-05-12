@@ -1,82 +1,74 @@
 // Urban / constituency-style data (wards, voter_areas, buildings, polling stations).
-// Used by dhaka13-style deployments but works for any tenant that loads this data.
+// All queries scoped to the active candidate.
 
 const { one, many } = require('../db/pool');
 
-async function listConstituencies() {
-    return many(`SELECT * FROM constituencies ORDER BY name`);
+async function listConstituencies(candidateId) {
+    return many(
+        `SELECT * FROM constituencies WHERE candidate_id = $1 ORDER BY name`,
+        [candidateId]
+    );
 }
 
-async function listWards({ constituencyId } = {}) {
+async function listWards(candidateId, { constituencyId } = {}) {
     if (constituencyId) {
         return many(
             `SELECT w.*, c.name AS constituency_name
                FROM wards w
-               LEFT JOIN constituencies c ON c.constituency_id = w.constituency_id
-              WHERE w.constituency_id = $1
+               LEFT JOIN constituencies c
+                 ON c.constituency_id = w.constituency_id AND c.candidate_id = $1
+              WHERE w.candidate_id = $1 AND w.constituency_id = $2
               ORDER BY w.ward_number`,
-            [constituencyId]
+            [candidateId, constituencyId]
         );
     }
-    return many(`SELECT * FROM wards ORDER BY ward_number`);
+    return many(
+        `SELECT * FROM wards WHERE candidate_id = $1 ORDER BY ward_number`,
+        [candidateId]
+    );
 }
 
-async function listVoterAreas({ wardId } = {}) {
+async function listVoterAreas(candidateId, { wardId } = {}) {
     if (wardId) {
-        return many(`SELECT * FROM voter_areas WHERE ward_id = $1 ORDER BY voter_area_name`, [wardId]);
+        return many(
+            `SELECT * FROM voter_areas
+              WHERE candidate_id = $1 AND ward_id = $2
+              ORDER BY voter_area_name`,
+            [candidateId, wardId]
+        );
     }
-    return many(`SELECT * FROM voter_areas ORDER BY voter_area_name`);
+    return many(
+        `SELECT * FROM voter_areas WHERE candidate_id = $1 ORDER BY voter_area_name`,
+        [candidateId]
+    );
 }
 
-async function buildingsForVoterArea(voterAreaName) {
+async function buildingsForVoterArea(candidateId, voterAreaName) {
     return many(
         `SELECT b.*
            FROM buildings b
-           JOIN voter_areas va ON va.voter_area_id = b.voter_area_id
-          WHERE va.voter_area_name = $1
-             OR va.village_name    = $1
+           JOIN voter_areas va
+             ON va.voter_area_id = b.voter_area_id AND va.candidate_id = $1
+          WHERE b.candidate_id = $1
+            AND (va.voter_area_name = $2 OR va.village_name = $2)
           ORDER BY b.building_id`,
-        [voterAreaName]
+        [candidateId, voterAreaName]
     );
 }
 
-async function buildingsGeojson(voterAreaName) {
-    const rows = await many(
-        `SELECT b.building_id, b.building_name, b.address,
-                b.latitude, b.longitude, b.metadata
-           FROM buildings b
-           JOIN voter_areas va ON va.voter_area_id = b.voter_area_id
-          WHERE va.voter_area_name = $1 OR va.village_name = $1`,
-        [voterAreaName]
-    );
-    return {
-        type: 'FeatureCollection',
-        features: rows
-            .filter((r) => r.latitude && r.longitude)
-            .map((r) => ({
-                type: 'Feature',
-                geometry: { type: 'Point', coordinates: [r.longitude, r.latitude] },
-                properties: {
-                    building_id: r.building_id,
-                    building_name: r.building_name,
-                    address: r.address,
-                    ...(r.metadata || {}),
-                },
-            })),
-    };
-}
-
-async function buildingVisitedCount(voterAreaId) {
+async function buildingVisitedCount(candidateId, voterAreaId) {
     return one(
         `SELECT COUNT(DISTINCT c.building_id) AS visited
            FROM canvassing c
-           JOIN buildings b ON b.building_id = c.building_id
-          WHERE b.voter_area_id = $1`,
-        [voterAreaId]
+           JOIN buildings b
+             ON b.building_id = c.building_id AND b.candidate_id = $1
+          WHERE c.candidate_id = $1
+            AND b.voter_area_id = $2`,
+        [candidateId, voterAreaId]
     );
 }
 
-async function canvassedVotersForBuilding(buildingId) {
+async function canvassedVotersForBuilding(candidateId, buildingId) {
     return many(
         `SELECT c.*,
                 v.name      AS voter_name,
@@ -86,23 +78,36 @@ async function canvassedVotersForBuilding(buildingId) {
            FROM canvassing c
            JOIN voters v ON v.voter_id = c.voter_id
            LEFT JOIN users u ON u.user_id = c.user_id
-          WHERE c.building_id = $1
+          WHERE c.candidate_id = $1 AND c.building_id = $2
           ORDER BY c.canvass_date DESC`,
-        [buildingId]
+        [candidateId, buildingId]
     );
 }
 
-async function pollingStations({ wardId } = {}) {
+async function pollingStations(candidateId, { wardId } = {}) {
     if (wardId) {
-        return many(`SELECT * FROM polling_stations WHERE ward_id = $1`, [wardId]);
+        return many(
+            `SELECT * FROM polling_stations
+              WHERE candidate_id = $1 AND ward_id = $2`,
+            [candidateId, wardId]
+        );
     }
-    return many(`SELECT * FROM polling_stations`);
+    return many(
+        `SELECT * FROM polling_stations WHERE candidate_id = $1`,
+        [candidateId]
+    );
 }
 
-async function hierarchy() {
-    const constituencies = await listConstituencies();
-    const wards = await many(`SELECT * FROM wards ORDER BY ward_number`);
-    const voterAreas = await many(`SELECT voter_area_id, ward_id, voter_area_name FROM voter_areas`);
+async function hierarchy(candidateId) {
+    const constituencies = await listConstituencies(candidateId);
+    const wards = await many(
+        `SELECT * FROM wards WHERE candidate_id = $1 ORDER BY ward_number`,
+        [candidateId]
+    );
+    const voterAreas = await many(
+        `SELECT voter_area_id, ward_id, voter_area_name FROM voter_areas WHERE candidate_id = $1`,
+        [candidateId]
+    );
 
     const wardsByConstituency = {};
     for (const w of wards) {
@@ -129,7 +134,6 @@ module.exports = {
     listWards,
     listVoterAreas,
     buildingsForVoterArea,
-    buildingsGeojson,
     buildingVisitedCount,
     canvassedVotersForBuilding,
     pollingStations,

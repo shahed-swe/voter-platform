@@ -1,7 +1,35 @@
 const userModel = require('../models/userModel');
+const candidateModel = require('../models/candidateModel');
 const { comparePassword } = require('../utils/password');
 const { sign } = require('../utils/jwt');
-const { AuthError, ValidationError } = require('../utils/errors');
+const { AuthError, ValidationError, ForbiddenError } = require('../utils/errors');
+
+/**
+ * Build the JWT payload for a user.
+ *  - super_admins: have NO candidate scope unless they pick one (frontend
+ *    drives switching). They can see all candidates in the list.
+ *  - regular users: must belong to ≥1 candidate; we auto-activate the first
+ *    one when there's exactly one.
+ */
+async function buildTokenPayload(user) {
+    const grants = await candidateModel.listForUser(user.user_id);
+    const isSuper = !!user.is_super_admin;
+
+    // Default the active candidate to the first one. Users with multiple
+    // can switch via /api/auth/switch-candidate (the header switcher).
+    const activeCandidate = grants[0]?.candidate_id || null;
+
+    return {
+        user_id:        user.user_id,
+        username:       user.username,
+        email:          user.email,
+        name:           user.name,
+        role:           user.role,
+        is_super_admin: isSuper,
+        candidates:     grants.map((g) => ({ id: g.candidate_id, role: g.role })),
+        active_candidate: activeCandidate,
+    };
+}
 
 async function login(req, res) {
     const { username, password } = req.body || {};
@@ -13,22 +41,31 @@ async function login(req, res) {
     const ok = await comparePassword(password, user.password_hash);
     if (!ok) throw new AuthError('Invalid credentials');
 
-    const payload = {
-        user_id: user.user_id,
-        username: user.username,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-    };
+    // Surface is_super_admin from DB (findByUsernameOrEmail returns it now)
+    const fullUser = await userModel.findById(user.user_id);
+    const payload = await buildTokenPayload({ ...user, ...fullUser });
+
+    // Reject users with no candidate access (super_admins are allowed through)
+    if (!payload.is_super_admin && payload.candidates.length === 0) {
+        throw new ForbiddenError('No campaign assigned to this account. Contact your administrator.');
+    }
+
     const token = sign(payload);
 
     res.json({
         success: true,
         token,
         user: {
-            ...payload,
+            user_id: payload.user_id,
+            username: payload.username,
+            email: payload.email,
+            name: payload.name,
+            role: payload.role,
+            is_super_admin: payload.is_super_admin,
             password_changed: user.password_changed,
         },
+        candidates: payload.candidates,
+        active_candidate: payload.active_candidate,
     });
 }
 
@@ -39,11 +76,53 @@ async function logout(_req, res) {
 async function me(req, res) {
     const user = await userModel.findById(req.user.user_id);
     if (!user) throw new AuthError('User not found');
-    res.json({ success: true, user });
+
+    let activeCandidate = null;
+    if (req.user.active_candidate) {
+        activeCandidate = await candidateModel.findById(req.user.active_candidate);
+    }
+
+    res.json({
+        success: true,
+        user: {
+            ...user,
+            is_super_admin: !!req.user.is_super_admin,
+        },
+        candidates: req.user.candidates || [],
+        active_candidate: activeCandidate,
+    });
 }
 
 async function verify(req, res) {
     res.json({ success: true, user: req.user });
 }
 
-module.exports = { login, logout, me, verify };
+/**
+ * Switch to a different candidate. Issues a fresh JWT with that candidate
+ * as active. The user must already have access (via user_candidates) or be
+ * a super_admin.
+ */
+async function switchCandidate(req, res) {
+    const { candidate_id } = req.body || {};
+    if (!candidate_id) throw new ValidationError('candidate_id required');
+
+    const fullUser = await userModel.findById(req.user.user_id);
+    if (!fullUser?.is_active) throw new AuthError('User not active');
+
+    const candidate = await candidateModel.findById(candidate_id);
+    if (!candidate || candidate.status !== 'active') throw new ValidationError('Unknown candidate');
+
+    const isSuper = !!fullUser.is_super_admin;
+    if (!isSuper) {
+        const role = await candidateModel.userHasAccess(req.user.user_id, candidate_id);
+        if (!role) throw new ForbiddenError('You do not have access to this candidate');
+    }
+
+    const payload = await buildTokenPayload(fullUser);
+    payload.active_candidate = candidate_id;
+    const token = sign(payload);
+
+    res.json({ success: true, token, active_candidate: candidate });
+}
+
+module.exports = { login, logout, me, verify, switchCandidate };
