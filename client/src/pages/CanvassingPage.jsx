@@ -1,359 +1,432 @@
-import { useCallback, useEffect, useState } from 'react';
-import PageHeader from '../components/PageHeader.jsx';
-import { LoadingState, ErrorState, EmptyState, Spinner } from '../components/LoadingState.jsx';
-import MapView, { styles } from '../components/MapView.jsx';
-import useApi from '../hooks/useApi.js';
+import { useEffect, useMemo, useState } from 'react';
+import L from 'leaflet';
+import { MapContainer, TileLayer, GeoJSON, useMap } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
+
+import WardMultiSelect from '../components/canvassing/WardMultiSelect.jsx';
+import VoterAreaMultiSelect from '../components/canvassing/VoterAreaMultiSelect.jsx';
+import VoterListPanel from '../components/canvassing/VoterListPanel.jsx';
+import ActiveFilterChips from '../components/canvassing/ActiveFilterChips.jsx';
+import CanvassFormModal from '../components/canvassing/CanvassFormModal.jsx';
+import { LoadingState, ErrorState } from '../components/LoadingState.jsx';
+
 import * as geoApi from '../api/geo.js';
-import * as votersApi from '../api/voters.js';
-import * as canvassingApi from '../api/canvassing.js';
 
-const SUPPORT_LEVELS = [
-    'Strong support', 'Leaning support', 'Undecided', 'Leaning opposed', 'Strong oppose',
-];
-
-function emptyForm(voterId) {
-    return {
-        voter_id: voterId,
-        support_level: 'Undecided',
-        support_rating: 3,
-        is_undecided: false,
-        is_minority: false,
-        source: 'Primary',
-        voter_member_count: '',
-        contact_phone: '',
-        contact_email: '',
-        issues_concerns: '',
-        household_size: '',
-        income_bracket: '',
-        follow_up_needed: false,
-        follow_up_date: '',
-        latitude: '',
-        longitude: '',
-        location_verified: false,
-        floor_number: '',
-        flat_number: '',
-        building_name: '',
-        address: '',
-    };
-}
-
-function CanvassModal({ voter, onClose, onDone }) {
-    const [form, setForm]   = useState(() => emptyForm(voter.voter_id));
-    const [busy, setBusy]   = useState(false);
-    const [error, setError] = useState(null);
-
-    const update = (k) => (e) =>
-        setForm((f) => ({
-            ...f,
-            [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value,
-        }));
-
-    const captureGps = () => {
-        if (!navigator.geolocation) return;
-        navigator.geolocation.getCurrentPosition(
-            (pos) =>
-                setForm((f) => ({
-                    ...f,
-                    latitude: pos.coords.latitude,
-                    longitude: pos.coords.longitude,
-                    location_verified: true,
-                })),
-            (err) => setError(err.message)
-        );
-    };
-
-    async function submit(e) {
-        e.preventDefault();
-        setBusy(true); setError(null);
-        try {
-            await canvassingApi.submit({
-                ...form,
-                support_rating: form.support_rating ? Number(form.support_rating) : null,
-                voter_member_count: form.voter_member_count ? Number(form.voter_member_count) : null,
-                household_size: form.household_size ? Number(form.household_size) : null,
-                latitude: form.latitude ? Number(form.latitude) : null,
-                longitude: form.longitude ? Number(form.longitude) : null,
-            });
-            onDone();
-        } catch (err) {
-            setError(err.response?.data?.error || err.message);
-        } finally {
-            setBusy(false);
-        }
+// --- Dedupe voter areas by village_name (production has each row twice) ---
+function dedupeVoterAreas(geo) {
+    if (!geo?.features) return geo;
+    const groups = new Map();
+    for (const f of geo.features) {
+        const name = (f.properties.village_name || '').trim();
+        if (!name) continue;
+        if (Number(f.properties.total_population || 0) === 0) continue;
+        const list = groups.get(name) || [];
+        list.push(f);
+        groups.set(name, list);
     }
-
-    return (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[1000]">
-            <form className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto" onSubmit={submit}>
-                <div className="border-b border-gray-200 px-5 py-3 flex justify-between items-center sticky top-0 bg-white">
-                    <div>
-                        <h3 className="font-semibold">{voter.name}</h3>
-                        <p className="text-xs text-gray-500">VID {voter.sos_vid} · {voter.gender || '—'} · age {voter.age || '?'}</p>
-                    </div>
-                    <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600">
-                        <i className="fas fa-times" />
-                    </button>
-                </div>
-
-                <div className="p-5 space-y-3">
-                    {error && (
-                        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded p-2">{error}</div>
-                    )}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <div>
-                            <label className="input-label">Support level</label>
-                            <select className="input-field" value={form.support_level} onChange={update('support_level')}>
-                                {SUPPORT_LEVELS.map((l) => <option key={l}>{l}</option>)}
-                            </select>
-                        </div>
-                        <div>
-                            <label className="input-label">Rating (1-5)</label>
-                            <input type="number" min="1" max="5" className="input-field"
-                                value={form.support_rating} onChange={update('support_rating')} />
-                        </div>
-                        <div>
-                            <label className="input-label">Phone</label>
-                            <input className="input-field" value={form.contact_phone} onChange={update('contact_phone')} />
-                        </div>
-                        <div>
-                            <label className="input-label">Household size</label>
-                            <input type="number" className="input-field" value={form.household_size} onChange={update('household_size')} />
-                        </div>
-                        <div className="md:col-span-2">
-                            <label className="input-label">Issues / concerns</label>
-                            <textarea className="input-field" rows="2" value={form.issues_concerns} onChange={update('issues_concerns')} />
-                        </div>
-                    </div>
-
-                    <fieldset className="border border-gray-200 rounded-md p-3">
-                        <legend className="text-xs font-medium text-gray-600 px-1">Address (urban)</legend>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-2">
-                            <input className="input-field" placeholder="Building" value={form.building_name} onChange={update('building_name')} />
-                            <input className="input-field" placeholder="Floor"    value={form.floor_number}  onChange={update('floor_number')} />
-                            <input className="input-field" placeholder="Flat"     value={form.flat_number}   onChange={update('flat_number')} />
-                            <input className="input-field" placeholder="Address"  value={form.address}       onChange={update('address')} />
-                        </div>
-                    </fieldset>
-
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
-                        <div>
-                            <label className="input-label">Latitude</label>
-                            <input className="input-field" value={form.latitude} onChange={update('latitude')} />
-                        </div>
-                        <div>
-                            <label className="input-label">Longitude</label>
-                            <input className="input-field" value={form.longitude} onChange={update('longitude')} />
-                        </div>
-                        <button type="button" className="btn-secondary" onClick={captureGps}>
-                            <i className="fas fa-location-crosshairs" /> Capture GPS
-                        </button>
-                    </div>
-
-                    <div className="flex gap-4 text-sm pt-1">
-                        <label className="flex items-center gap-2">
-                            <input type="checkbox" checked={form.follow_up_needed} onChange={update('follow_up_needed')} /> Follow-up
-                        </label>
-                        <label className="flex items-center gap-2">
-                            <input type="checkbox" checked={form.is_minority} onChange={update('is_minority')} /> Minority
-                        </label>
-                    </div>
-                </div>
-
-                <div className="border-t border-gray-200 px-5 py-3 sticky bottom-0 bg-white flex justify-end gap-2">
-                    <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
-                    <button type="submit" className="btn-primary" disabled={busy}>
-                        {busy ? <Spinner size="sm" /> : <i className="fas fa-check" />}
-                        Save record
-                    </button>
-                </div>
-            </form>
-        </div>
-    );
+    return {
+        type: 'FeatureCollection',
+        features: [...groups.values()].map((siblings) => {
+            const sorted = [...siblings].sort(
+                (a, b) => Number(a.properties.voter_area_id) - Number(b.properties.voter_area_id)
+            );
+            const primary = sorted[0];
+            return {
+                ...primary,
+                properties: {
+                    ...primary.properties,
+                    sibling_ids: sorted.map((f) => String(f.properties.voter_area_id)),
+                },
+            };
+        }),
+    };
 }
 
-function VoterListPanel({ voterArea, onClose, onPick }) {
-    const fetch = useCallback(() => {
-        // First try by_voter_area using village_name as the key (matches clean_voter_area)
-        if (!voterArea) return Promise.resolve({ voters: [] });
-        return votersApi.byVoterArea(voterArea.village_name, { limit: 500 });
-    }, [voterArea]);
-    const { data, loading, error, refetch } = useApi(fetch, [voterArea?.voter_area_id]);
+function fitToFeatures(features) {
+    if (!features?.length) return null;
+    try {
+        const layer = L.geoJSON({ type: 'FeatureCollection', features });
+        const b = layer.getBounds();
+        return b.isValid() ? b : null;
+    } catch {
+        return null;
+    }
+}
+function FitTo({ features }) {
+    const map = useMap();
+    useEffect(() => {
+        const b = fitToFeatures(features);
+        if (b) map.fitBounds(b, { padding: [40, 40] });
+    }, [features, map]);
+    return null;
+}
 
+// Bottom-center Satellite/Map toggle (replaces top-right layer control)
+function BaseLayerToggle({ value, onChange }) {
     return (
-        <div className="card h-full overflow-hidden flex flex-col p-0">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-gray-50">
-                <div>
-                    <h3 className="font-semibold text-sm">{voterArea?.village_name || 'Voter area'}</h3>
-                    <p className="text-xs text-gray-500">
-                        {voterArea?.union_name && <>{voterArea.union_name} · </>}
-                        {Number(voterArea?.total_population || 0).toLocaleString()} pop · ID {voterArea?.voter_area_id}
-                    </p>
-                </div>
-                <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
-                    <i className="fas fa-times" />
-                </button>
-            </div>
-            <div className="flex-1 overflow-y-auto">
-                {loading ? (
-                    <LoadingState label="Loading voters..." />
-                ) : error ? (
-                    <ErrorState error={error} onRetry={refetch} />
-                ) : !data?.voters?.length ? (
-                    <EmptyState icon="fa-users-slash" label="No voters mapped to this area" />
-                ) : (
-                    <ul className="divide-y divide-gray-100 text-sm">
-                        {data.voters.map((v) => (
-                            <li
-                                key={v.voter_id}
-                                className="px-4 py-2 hover:bg-gray-50 cursor-pointer flex justify-between items-center"
-                                onClick={() => onPick(v)}
-                            >
-                                <div>
-                                    <div className="font-medium">{v.name}</div>
-                                    <div className="text-xs text-gray-500">VID {v.sos_vid} · age {v.age || '?'} · {v.gender || '—'}</div>
-                                </div>
-                                <span className={v.status === 'Visited' ? 'badge-success' : 'badge-warning'}>
-                                    {v.status}
-                                </span>
-                            </li>
-                        ))}
-                    </ul>
-                )}
-            </div>
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[400] bg-white rounded-md shadow-md border border-gray-200 flex overflow-hidden">
+            <button
+                className={`px-4 py-2 text-sm font-medium ${value === 'satellite' ? 'bg-white text-gray-700' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                onClick={() => onChange('satellite')}
+            >
+                Satellite
+            </button>
+            <button
+                className={`px-4 py-2 text-sm font-medium ${value === 'map' ? 'bg-brand text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                onClick={() => onChange('map')}
+            >
+                Map
+            </button>
         </div>
     );
 }
 
 export default function CanvassingPage() {
-    const [selectedArea, setSelectedArea] = useState(null);
-    const [buildings, setBuildings] = useState(null);
-    const [loadingBuildings, setLoadingBuildings] = useState(false);
-    const [activeVoter, setActiveVoter] = useState(null);
-    const [flash, setFlash] = useState(null);
+    const [wardsGeo, setWardsGeo]                 = useState(null);
+    const [voterAreasGeoAll, setVoterAreasGeoAll] = useState(null); // all areas (across selected wards)
+    const [buildingsGeo, setBuildingsGeo]         = useState(null);
+    const [loadingBase, setLoadingBase]           = useState(true);
+    const [loadingScope, setLoadingScope]         = useState(false);
+    const [error, setError]                       = useState(null);
 
-    const fetchAreas = useCallback(() => geoApi.voterAreas(), []);
-    const { data: areasGeo, loading, error, refetch } = useApi(fetchAreas, []);
+    const [wardIds, setWardIds]                   = useState([]);
+    const [voterAreaIds, setVoterAreaIds]         = useState([]);
+    const [base, setBase]                         = useState('map');
+    const [activeVoter, setActiveVoter]           = useState(null);
+    // When a building is clicked, the right panel switches scope to that
+    // building's voter area. Cleared automatically if the area selection
+    // changes (effect below).
+    const [activeBuilding, setActiveBuilding]     = useState(null);
+    const [flash, setFlash]                       = useState(null);
 
-    // When a voter area is picked, fetch its buildings.
+    // Whenever wards or voter areas change, clear any active building so the
+    // panel falls back to the area-level scope.
     useEffect(() => {
-        if (!selectedArea?.voter_area_id) {
-            setBuildings(null);
+        setActiveBuilding(null);
+    }, [wardIds.join(','), voterAreaIds.join(',')]);
+
+    // --- initial load: all wards ---
+    useEffect(() => {
+        let cancelled = false;
+        geoApi.wards()
+            .then((data) => !cancelled && setWardsGeo(data))
+            .catch((err) => !cancelled && setError(err))
+            .finally(() => !cancelled && setLoadingBase(false));
+        return () => { cancelled = true; };
+    }, []);
+
+    // --- load voter areas for selected wards (multi-ward → multi fetch + merge) ---
+    useEffect(() => {
+        setVoterAreaIds([]);
+        setBuildingsGeo(null);
+        if (!wardIds.length) {
+            setVoterAreasGeoAll(null);
             return;
         }
-        setLoadingBuildings(true);
-        geoApi
-            .buildings(selectedArea.voter_area_id)
-            .then((data) => setBuildings(data))
-            .catch(() => setBuildings({ type: 'FeatureCollection', features: [] }))
-            .finally(() => setLoadingBuildings(false));
-    }, [selectedArea?.voter_area_id]);
+        setLoadingScope(true);
+        Promise.all(wardIds.map((id) => geoApi.voterAreas({ ward_id: id })))
+            .then((parts) => {
+                const merged = { type: 'FeatureCollection', features: parts.flatMap((p) => p.features || []) };
+                setVoterAreasGeoAll(dedupeVoterAreas(merged));
+            })
+            .catch((err) => setError(err))
+            .finally(() => setLoadingScope(false));
+    }, [wardIds.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    if (loading) return <LoadingState />;
-    if (error) return <ErrorState error={error} onRetry={refetch} />;
+    // --- load buildings when voter areas selected ---
+    useEffect(() => {
+        if (!voterAreaIds.length || !voterAreasGeoAll) {
+            setBuildingsGeo(null);
+            return;
+        }
+        const allIds = new Set();
+        for (const f of voterAreasGeoAll.features) {
+            const id = String(f.properties.voter_area_id);
+            if (voterAreaIds.includes(id)) {
+                (f.properties.sibling_ids || [id]).forEach((s) => allIds.add(s));
+            }
+        }
+        setLoadingScope(true);
+        Promise.all([...allIds].map((id) => geoApi.buildings(id)))
+            .then((parts) => {
+                const features = parts.flatMap((p) => p.features || []);
+                setBuildingsGeo({ type: 'FeatureCollection', features });
+            })
+            .catch((err) => setError(err))
+            .finally(() => setLoadingScope(false));
+    }, [voterAreaIds.join(','), voterAreasGeoAll]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // --- derived: items for voter-area dropdown (Bengali labels) ---
+    const voterAreaItems = useMemo(
+        () =>
+            (voterAreasGeoAll?.features || []).map((f) => ({
+                voter_area_id: String(f.properties.voter_area_id),
+                label: f.properties.bangla_voter_area_name || f.properties.village_name,
+                fallback_label: f.properties.village_name,
+                total_population: f.properties.total_population,
+            })),
+        [voterAreasGeoAll]
+    );
+
+    // --- derived: bengali voter area names to query voters by ---
+    const scopeAreas = useMemo(() => {
+        if (!voterAreasGeoAll) return [];
+        const names = new Set();
+        for (const f of voterAreasGeoAll.features) {
+            if (voterAreaIds.includes(String(f.properties.voter_area_id))) {
+                if (f.properties.bangla_voter_area_name) names.add(f.properties.bangla_voter_area_name);
+                if (f.properties.village_name) names.add(f.properties.village_name);
+            }
+        }
+        return [...names];
+    }, [voterAreaIds, voterAreasGeoAll]);
+
+    // --- derived: scope label for the right-panel header (English fallback) ---
+    const scopeLabel = useMemo(() => {
+        if (voterAreaIds.length === 1) {
+            const a = voterAreasGeoAll?.features.find(
+                (f) => String(f.properties.voter_area_id) === voterAreaIds[0]
+            );
+            return a?.properties.village_name || a?.properties.bangla_voter_area_name || '';
+        }
+        if (voterAreaIds.length > 1) return `${voterAreaIds.length} voter areas`;
+        return '';
+    }, [voterAreaIds, voterAreasGeoAll]);
+
+    // --- derived: visible ward + voter-area filter chips ---
+    const activeFilters = useMemo(() => {
+        const out = [];
+        for (const id of wardIds) {
+            const w = wardsGeo?.features.find((f) => String(f.properties.ward_id) === id);
+            const label = w ? w.properties.ward_number : id;
+            out.push({
+                key: `ward-${id}`,
+                label,
+                onClear: () => setWardIds((arr) => arr.filter((x) => x !== id)),
+            });
+        }
+        for (const id of voterAreaIds) {
+            const a = voterAreasGeoAll?.features.find(
+                (f) => String(f.properties.voter_area_id) === id
+            );
+            const label = a?.properties.village_name || a?.properties.bangla_voter_area_name || id;
+            out.push({
+                key: `va-${id}`,
+                label,
+                onClear: () => setVoterAreaIds((arr) => arr.filter((x) => x !== id)),
+            });
+        }
+        return out;
+    }, [wardIds, voterAreaIds, wardsGeo, voterAreasGeoAll]);
+
+    // --- derived: map mode ---
+    const mode = voterAreaIds.length ? 'buildings' : wardIds.length ? 'voter_areas' : 'constituency';
+
+    // --- bounds fit ---
+    const fitFeatures = useMemo(() => {
+        if (mode === 'buildings' && voterAreasGeoAll) {
+            return voterAreasGeoAll.features.filter((f) =>
+                voterAreaIds.includes(String(f.properties.voter_area_id))
+            );
+        }
+        if (mode === 'voter_areas' && wardsGeo) {
+            return wardsGeo.features.filter((f) => wardIds.includes(String(f.properties.ward_id)));
+        }
+        return wardsGeo?.features || [];
+    }, [mode, wardIds, voterAreaIds, wardsGeo, voterAreasGeoAll]);
+
+    if (loadingBase) return <LoadingState />;
+    if (error)       return <ErrorState error={error} onRetry={() => window.location.reload()} />;
 
     return (
-        <>
-            <PageHeader
-                title="Canvassing map"
-                subtitle="Click a voter area to drill in; click a voter to record a canvass"
-            />
-
-            {flash && (
-                <div className="bg-green-50 border border-green-200 text-green-700 rounded p-3 mb-4">
-                    <i className="fas fa-check-circle mr-2" /> {flash}
+        <div className="h-full flex flex-col relative overflow-hidden">
+            {/* Top bar — active filters chip strip */}
+            {activeFilters.length > 0 && (
+                <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[500] bg-white border border-gray-200 rounded-md shadow-md px-4 py-2">
+                    <ActiveFilterChips filters={activeFilters} />
                 </div>
             )}
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4" style={{ minHeight: 600 }}>
-                <div className="lg:col-span-2">
-                    <div className="card p-0 overflow-hidden">
-                        <div className="px-5 py-3 border-b border-gray-100 flex justify-between items-center">
-                            <h3 className="font-semibold text-gray-800">
-                                <i className="fas fa-layer-group mr-2 text-brand" />
-                                {selectedArea
-                                    ? `${selectedArea.village_name} — ${buildings?.features?.length ?? 0} buildings${
-                                          loadingBuildings ? ' (loading...)' : ''
-                                      }`
-                                    : `${areasGeo.features?.length || 0} voter areas`}
-                            </h3>
-                            {selectedArea && (
-                                <button className="btn-secondary text-xs" onClick={() => setSelectedArea(null)}>
-                                    <i className="fas fa-arrow-left" /> Back to areas
-                                </button>
-                            )}
-                        </div>
-                        <MapView
-                            height={600}
-                            layers={
-                                selectedArea && buildings
-                                    ? [
-                                          {
-                                              id: 'buildings',
-                                              data: buildings,
-                                              style: styles.building,
-                                              tooltip: (f) => `
-                                                  <strong>${escapeHtml(f.properties.building_name || f.properties.house || 'Building #' + f.properties.building_id)}</strong><br/>
-                                                  ${escapeHtml(f.properties.street || '')}<br/>
-                                                  ${f.properties.canvassed ? '<span style="color:#2E7D32">✓ Canvassed</span>' : 'Not canvassed'}
-                                              `,
-                                          },
-                                      ]
-                                    : [
-                                          {
-                                              id: 'areas',
-                                              data: areasGeo,
-                                              style: styles.voterArea,
-                                              tooltip: (f) => `
-                                                  <strong>${escapeHtml(f.properties.village_name || 'Area')}</strong><br/>
-                                                  ${escapeHtml(f.properties.union_name || '')}<br/>
-                                                  ${Number(f.properties.total_population || 0).toLocaleString()} pop ·
-                                                  ${f.properties.building_count || 0} buildings
-                                              `,
-                                              onClick: (f) => setSelectedArea(f.properties),
-                                          },
-                                      ]
-                            }
-                        />
-                    </div>
+            {flash && (
+                <div className="absolute top-3 left-4 z-[500] bg-green-50 border border-green-200 text-green-700 rounded-md px-3 py-2 text-sm shadow-md">
+                    <i className="fas fa-check-circle mr-1" /> {flash}
                 </div>
+            )}
 
-                <aside className="lg:col-span-1">
-                    {selectedArea ? (
-                        <VoterListPanel
-                            voterArea={selectedArea}
-                            onClose={() => setSelectedArea(null)}
-                            onPick={(v) => setActiveVoter(v)}
+            {/* Map fills the pane */}
+            <div className="absolute inset-0">
+                <MapContainer
+                    center={[23.7806, 90.3372]}
+                    zoom={12}
+                    style={{ height: '100%', width: '100%' }}
+                    zoomControl={false}
+                    preferCanvas
+                >
+                    {base === 'satellite' ? (
+                        <TileLayer
+                            url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                            attribution="Tiles &copy; Esri"
                         />
                     ) : (
-                        <div className="card h-full">
-                            <h3 className="card-title">How to canvass</h3>
-                            <ol className="text-sm text-gray-600 space-y-2 list-decimal pl-5">
-                                <li>Click any voter area polygon on the map.</li>
-                                <li>Buildings inside that area will load.</li>
-                                <li>Select a voter from the list on the right.</li>
-                                <li>Fill in the canvass form and save.</li>
-                            </ol>
-                        </div>
+                        <TileLayer
+                            url="https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png"
+                            attribution="&copy; OpenStreetMap, &copy; CARTO"
+                        />
                     )}
-                </aside>
+
+                    {/* Constituency mode: all wards in one shade */}
+                    {mode === 'constituency' && wardsGeo && (
+                        <GeoJSON
+                            key={`constituency-${wardsGeo.features.length}`}
+                            data={wardsGeo}
+                            style={{
+                                fillColor: '#A5D6A7',
+                                color: '#1B5E20',
+                                weight: 1,
+                                opacity: 0.95,
+                                fillOpacity: 0.5,
+                            }}
+                            onEachFeature={(f, layer) => {
+                                layer.bindTooltip(
+                                    `Ward ${f.properties.ward_number}`,
+                                    { sticky: true }
+                                );
+                                layer.on('click', () => setWardIds([String(f.properties.ward_id)]));
+                            }}
+                        />
+                    )}
+
+                    {/* Voter-areas layer — always render ALL areas of the picked wards.
+                        Selected areas get a thick dashed outline (so buildings inside
+                        show through); unselected areas stay filled and dimmer so the
+                        user can still see them as context and click to switch. */}
+                    {(mode === 'voter_areas' || mode === 'buildings') && voterAreasGeoAll && (
+                        <GeoJSON
+                            key={`va-${wardIds.join(',')}-${voterAreaIds.join(',')}-${voterAreasGeoAll.features.length}`}
+                            data={voterAreasGeoAll}
+                            style={(f) => {
+                                const isSelected = voterAreaIds.includes(
+                                    String(f.properties.voter_area_id)
+                                );
+                                if (isSelected) {
+                                    return {
+                                        fillColor: 'transparent',
+                                        color: '#1B5E20',
+                                        weight: 3,
+                                        opacity: 1,
+                                        dashArray: '4,3',
+                                    };
+                                }
+                                return {
+                                    fillColor: '#A5D6A7',
+                                    color: '#1B5E20',
+                                    weight: 1.2,
+                                    // Dim unselected areas a bit when we're zoomed into one
+                                    opacity: mode === 'buildings' ? 0.7 : 0.95,
+                                    fillOpacity: mode === 'buildings' ? 0.25 : 0.55,
+                                };
+                            }}
+                            onEachFeature={(f, layer) => {
+                                layer.bindTooltip(
+                                    f.properties.bangla_voter_area_name ||
+                                        f.properties.village_name ||
+                                        'Area',
+                                    { sticky: true, className: 'bn-tooltip' }
+                                );
+                                // Map click always REPLACES selection with the clicked
+                                // area — fastest way to navigate between areas.
+                                layer.on('click', () =>
+                                    setVoterAreaIds([String(f.properties.voter_area_id)])
+                                );
+                            }}
+                        />
+                    )}
+
+                    {/* Buildings layer */}
+                    {mode === 'buildings' && buildingsGeo && (
+                        <GeoJSON
+                            key={`bldgs-${voterAreaIds.join(',')}-${buildingsGeo.features.length}-${activeBuilding?.building_id || ''}`}
+                            data={buildingsGeo}
+                            style={(f) => {
+                                const isActive =
+                                    activeBuilding &&
+                                    String(f.properties.building_id) ===
+                                        String(activeBuilding.building_id);
+                                if (isActive) {
+                                    return {
+                                        fillColor: '#0D47A1',
+                                        color: '#0B3D91',
+                                        weight: 2.5,
+                                        opacity: 1,
+                                        fillOpacity: 0.95,
+                                    };
+                                }
+                                return {
+                                    fillColor: f.properties.canvassed ? '#2E7D32' : '#3F7BD9',
+                                    color: f.properties.canvassed ? '#1B5E20' : '#1565C0',
+                                    weight: 1,
+                                    opacity: 1,
+                                    fillOpacity: 0.7,
+                                };
+                            }}
+                            onEachFeature={(f, layer) => {
+                                layer.bindTooltip('Click to see voters', { sticky: true });
+                                layer.on('click', () => setActiveBuilding(f.properties));
+                            }}
+                        />
+                    )}
+
+                    <FitTo features={fitFeatures} />
+                </MapContainer>
+
+                <BaseLayerToggle value={base} onChange={setBase} />
             </div>
 
+            {/* Left filter panel */}
+            <aside className="absolute left-4 top-4 bottom-4 w-[280px] z-[400] space-y-3 overflow-y-auto pr-1">
+                <WardMultiSelect
+                    wards={(wardsGeo?.features || []).map((f) => ({
+                        ward_id: String(f.properties.ward_id),
+                        ward_number: f.properties.ward_number,
+                    }))}
+                    value={wardIds}
+                    onChange={setWardIds}
+                />
+                <VoterAreaMultiSelect
+                    items={voterAreaItems}
+                    value={voterAreaIds}
+                    onChange={setVoterAreaIds}
+                    disabled={!wardIds.length || !voterAreaItems.length}
+                />
+                {loadingScope && (
+                    <div className="bg-white border border-brand/30 rounded-lg shadow-sm p-3 text-xs text-gray-500 text-center">
+                        <i className="fas fa-spinner fa-spin mr-1" /> Loading...
+                    </div>
+                )}
+            </aside>
+
+            {/* Right voter list panel */}
+            <aside className="absolute right-4 top-4 bottom-4 w-[380px] z-[400]">
+                <VoterListPanel
+                    scopeAreas={scopeAreas}
+                    scopeLabel={scopeLabel}
+                    building={activeBuilding}
+                    onClearBuilding={() => setActiveBuilding(null)}
+                    onPickVoter={(v) => setActiveVoter(v)}
+                />
+            </aside>
+
             {activeVoter && (
-                <CanvassModal
+                <CanvassFormModal
                     voter={activeVoter}
                     onClose={() => setActiveVoter(null)}
-                    onDone={() => {
-                        setFlash(`Canvass record saved for ${activeVoter.name}.`);
+                    onSubmitted={() => {
+                        setFlash(`Saved canvass for ${activeVoter.name}`);
                         setActiveVoter(null);
+                        setTimeout(() => setFlash(null), 4000);
                     }}
                 />
             )}
-        </>
+        </div>
     );
-}
-
-function escapeHtml(s) {
-    return String(s ?? '').replace(/[&<>"']/g, (c) => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-    }[c]));
 }

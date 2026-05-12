@@ -3,7 +3,7 @@ import L from 'leaflet';
 import { MapContainer, TileLayer, GeoJSON, useMap, LayersControl, Marker, Popup } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 
-import WardSelect from '../components/dashboard/WardSelect.jsx';
+import WardMultiSelect from '../components/canvassing/WardMultiSelect.jsx';
 import VoterAreaMultiSelect from '../components/dashboard/VoterAreaMultiSelect.jsx';
 import PollingToggle from '../components/dashboard/PollingToggle.jsx';
 import PopulationStats from '../components/dashboard/PopulationStats.jsx';
@@ -95,7 +95,7 @@ export default function DashboardPage() {
     const [loadingScope, setLoadingScope]         = useState(false);
     const [error, setError]                       = useState(null);
 
-    const [wardId, setWardId]                     = useState(null);
+    const [wardIds, setWardIds]                   = useState([]);
     const [voterAreaIds, setVoterAreaIds]         = useState([]);
     const [showPolling, setShowPolling]           = useState(false);
     const [activeBuilding, setActiveBuilding]     = useState(null);
@@ -114,21 +114,23 @@ export default function DashboardPage() {
         return () => { cancelled = true; };
     }, []);
 
-    // --- load voter areas when a ward is selected ---
+    // --- load voter areas when ward(s) are selected — multi-ward merge ---
     useEffect(() => {
         setVoterAreaIds([]);
         setBuildingsGeo(null);
-        if (!wardId) {
+        if (!wardIds.length) {
             setVoterAreasGeo(null);
             return;
         }
         setLoadingScope(true);
-        geoApi
-            .voterAreas({ ward_id: wardId })
-            .then((data) => setVoterAreasGeo(dedupeVoterAreas(data)))
+        Promise.all(wardIds.map((id) => geoApi.voterAreas({ ward_id: id })))
+            .then((parts) => {
+                const merged = { type: 'FeatureCollection', features: parts.flatMap((p) => p.features || []) };
+                setVoterAreasGeo(dedupeVoterAreas(merged));
+            })
             .catch((err) => setError(err))
             .finally(() => setLoadingScope(false));
-    }, [wardId]);
+    }, [wardIds.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // --- load buildings when voter areas selected ---
     // Expand selected primary ids to their sibling ids so we fetch buildings
@@ -159,55 +161,49 @@ export default function DashboardPage() {
     useEffect(() => {
         if (!showPolling || pollingStations.length) return;
         urbanApi
-            .pollingStations(wardId || 'all')
+            .pollingStations(wardIds.length === 1 ? wardIds[0] : 'all')
             .then((res) => setPollingStations(res?.polling_stations || []))
             .catch(() => {});
-    }, [showPolling, wardId, pollingStations.length]);
+    }, [showPolling, wardIds.join(','), pollingStations.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // ----- derived: stats for current scope -----
     const stats = useMemo(() => {
+        const empty = { total_population: 0, male_count: 0, female_count: 0 };
+        const sumFeatures = (features) =>
+            features.reduce(
+                (acc, f) => {
+                    acc.total_population += Number(f.properties.total_population || 0);
+                    acc.male_count       += Number(f.properties.male_count || 0);
+                    acc.female_count     += Number(f.properties.female_count || 0);
+                    return acc;
+                },
+                { ...empty }
+            );
+
         // Voter area scope wins
         if (voterAreaIds.length && voterAreasGeo) {
-            const selected = voterAreasGeo.features.filter((f) =>
-                voterAreaIds.includes(String(f.properties.voter_area_id))
-            );
-            return selected.reduce(
-                (acc, f) => {
-                    acc.total_population += Number(f.properties.total_population || 0);
-                    acc.male_count       += Number(f.properties.male_count || 0);
-                    acc.female_count     += Number(f.properties.female_count || 0);
-                    return acc;
-                },
-                { total_population: 0, male_count: 0, female_count: 0 }
+            return sumFeatures(
+                voterAreasGeo.features.filter((f) =>
+                    voterAreaIds.includes(String(f.properties.voter_area_id))
+                )
             );
         }
-        // Ward scope
-        if (wardId && wardsGeo) {
-            const w = wardsGeo.features.find((f) => String(f.properties.ward_id) === String(wardId));
-            if (w) {
-                return {
-                    total_population: Number(w.properties.total_population || 0),
-                    male_count:       Number(w.properties.male_count || 0),
-                    female_count:     Number(w.properties.female_count || 0),
-                };
-            }
+        // Ward scope (one or more wards)
+        if (wardIds.length && wardsGeo) {
+            return sumFeatures(
+                wardsGeo.features.filter((f) =>
+                    wardIds.includes(String(f.properties.ward_id))
+                )
+            );
         }
         // Constituency scope
-        if (wardsGeo) {
-            return wardsGeo.features.reduce(
-                (acc, f) => {
-                    acc.total_population += Number(f.properties.total_population || 0);
-                    acc.male_count       += Number(f.properties.male_count || 0);
-                    acc.female_count     += Number(f.properties.female_count || 0);
-                    return acc;
-                },
-                { total_population: 0, male_count: 0, female_count: 0 }
-            );
-        }
-        return { total_population: 0, male_count: 0, female_count: 0 };
-    }, [wardsGeo, voterAreasGeo, wardId, voterAreaIds]);
+        return wardsGeo ? sumFeatures(wardsGeo.features) : empty;
+    }, [wardsGeo, voterAreasGeo, wardIds, voterAreaIds]);
 
     // ----- derived: assignment target -----
+    // Assignment only makes sense for an unambiguous single scope. With
+    // multiple wards or multiple voter areas selected, we don't pick one
+    // arbitrarily — the card disables itself.
     const assignTarget = useMemo(() => {
         if (voterAreaIds.length === 1 && voterAreasGeo) {
             const a = voterAreasGeo.features.find(
@@ -221,8 +217,10 @@ export default function DashboardPage() {
                 };
             }
         }
-        if (wardId && wardsGeo) {
-            const w = wardsGeo.features.find((f) => String(f.properties.ward_id) === String(wardId));
+        if (wardIds.length === 1 && voterAreaIds.length === 0 && wardsGeo) {
+            const w = wardsGeo.features.find(
+                (f) => String(f.properties.ward_id) === wardIds[0]
+            );
             if (w) {
                 return {
                     type: 'voter_area',
@@ -232,23 +230,33 @@ export default function DashboardPage() {
             }
         }
         return null;
-    }, [wardId, voterAreaIds, wardsGeo, voterAreasGeo]);
+    }, [wardIds, voterAreaIds, wardsGeo, voterAreasGeo]);
 
     const scopeLabel = useMemo(() => {
-        if (voterAreaIds.length === 1) return assignTarget?.label || 'Voter Area';
-        if (voterAreaIds.length > 1)   return `${voterAreaIds.length} Voter Areas selected`;
-        if (wardId && wardsGeo) {
-            const w = wardsGeo.features.find((f) => String(f.properties.ward_id) === String(wardId));
+        if (voterAreaIds.length === 1) {
+            const a = voterAreasGeo?.features.find(
+                (f) => String(f.properties.voter_area_id) === voterAreaIds[0]
+            );
+            return a?.properties.village_name || 'Voter Area';
+        }
+        if (voterAreaIds.length > 1) return `${voterAreaIds.length} Voter Areas selected`;
+        if (wardIds.length === 1 && wardsGeo) {
+            const w = wardsGeo.features.find((f) => String(f.properties.ward_id) === wardIds[0]);
             return w ? `Ward ${w.properties.ward_number}` : 'Ward';
         }
+        if (wardIds.length > 1) return `${wardIds.length} Wards selected`;
         return 'Constituency';
-    }, [wardId, voterAreaIds, wardsGeo, assignTarget]);
+    }, [wardIds, voterAreaIds, wardsGeo, voterAreasGeo]);
 
     // ----- derived: layers shown on the map -----
-    // Mode 1: nothing → constituency outline (union of wards, fill same color)
-    // Mode 2: ward picked → voter areas inside it (population shaded)
+    // Mode 1: no wards → constituency outline (union of wards, fill same color)
+    // Mode 2: ward(s) picked → voter areas inside them (population shaded)
     // Mode 3: voter areas picked → outline those + their buildings
-    const mode = voterAreaIds.length ? 'buildings' : wardId ? 'voter_areas' : 'constituency';
+    const mode = voterAreaIds.length
+        ? 'buildings'
+        : wardIds.length
+            ? 'voter_areas'
+            : 'constituency';
 
     const voterAreaItems = useMemo(
         () =>
@@ -276,10 +284,10 @@ export default function DashboardPage() {
             );
         }
         if (mode === 'voter_areas' && wardsGeo) {
-            return wardsGeo.features.filter((f) => String(f.properties.ward_id) === String(wardId));
+            return wardsGeo.features.filter((f) => wardIds.includes(String(f.properties.ward_id)));
         }
         return wardsGeo?.features || [];
-    }, [mode, wardsGeo, voterAreasGeo, wardId, voterAreaIds]);
+    }, [mode, wardsGeo, voterAreasGeo, wardIds, voterAreaIds]);
 
     if (loadingBase) return <LoadingState />;
     if (error)       return <ErrorState error={error} onRetry={() => window.location.reload()} />;
@@ -319,7 +327,7 @@ export default function DashboardPage() {
                     {/* Constituency mode: union look = wards all in same fill */}
                     {mode === 'constituency' && wardsGeo && (
                         <GeoJSON
-                            key="constituency"
+                            key={`constituency-${wardsGeo.features.length}`}
                             data={wardsGeo}
                             style={{
                                 fillColor: '#4CAF50',
@@ -335,19 +343,20 @@ export default function DashboardPage() {
                                     `${Number(f.properties.total_population).toLocaleString()} population`,
                                     { sticky: true }
                                 );
-                                layer.on('click', () => setWardId(String(f.properties.ward_id)));
+                                // Click a ward on the map → select just that one.
+                                layer.on('click', () => setWardIds([String(f.properties.ward_id)]));
                             }}
                         />
                     )}
 
-                    {/* Ward outline (when zoomed into ward / voter-area mode) */}
-                    {(mode === 'voter_areas' || mode === 'buildings') && wardsGeo && wardId && (
+                    {/* Ward outline(s) for all selected wards */}
+                    {(mode === 'voter_areas' || mode === 'buildings') && wardsGeo && wardIds.length > 0 && (
                         <GeoJSON
-                            key={`ward-${wardId}`}
+                            key={`ward-${wardIds.join(',')}-${wardsGeo.features.length}`}
                             data={{
                                 type: 'FeatureCollection',
                                 features: wardsGeo.features.filter(
-                                    (f) => String(f.properties.ward_id) === String(wardId)
+                                    (f) => wardIds.includes(String(f.properties.ward_id))
                                 ),
                             }}
                             style={{
@@ -363,7 +372,7 @@ export default function DashboardPage() {
                     {/* Voter-area mode: shade each area by population */}
                     {mode === 'voter_areas' && voterAreasGeo && (
                         <GeoJSON
-                            key={`vas-${wardId}`}
+                            key={`vas-${wardIds.join(',')}-${voterAreasGeo.features.length}`}
                             data={voterAreasGeo}
                             style={(f) => ({
                                 fillColor: shadeForPopulation(f.properties.total_population, maxAreaPop),
@@ -389,7 +398,7 @@ export default function DashboardPage() {
                     {/* Buildings mode: outline of selected voter areas + their buildings */}
                     {mode === 'buildings' && voterAreasGeo && (
                         <GeoJSON
-                            key={`vas-outline-${voterAreaIds.join(',')}`}
+                            key={`vas-outline-${voterAreaIds.join(',')}-${voterAreasGeo.features.length}`}
                             data={{
                                 type: 'FeatureCollection',
                                 features: voterAreasGeo.features.filter((f) =>
@@ -453,19 +462,19 @@ export default function DashboardPage() {
 
             {/* Left filters panel */}
             <aside className="absolute left-4 top-4 bottom-4 w-[280px] z-[400] space-y-3 overflow-y-auto pr-1">
-                <WardSelect
+                <WardMultiSelect
                     wards={(wardsGeo?.features || []).map((f) => ({
                         ward_id: String(f.properties.ward_id),
                         ward_number: f.properties.ward_number,
                     }))}
-                    value={wardId}
-                    onChange={setWardId}
+                    value={wardIds}
+                    onChange={setWardIds}
                 />
                 <VoterAreaMultiSelect
                     items={voterAreaItems}
                     value={voterAreaIds}
                     onChange={setVoterAreaIds}
-                    disabled={!wardId || !voterAreaItems.length}
+                    disabled={!wardIds.length || !voterAreaItems.length}
                 />
                 <PollingToggle checked={showPolling} onChange={setShowPolling} />
                 {loadingScope && (

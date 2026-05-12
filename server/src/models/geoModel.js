@@ -69,8 +69,11 @@ async function buildingsGeojson(voterAreaId) {
         SELECT b.building_id, b.voter_area_id, b.osm_id, b.address,
                b.house, b.street, b.city, b.office, b.name_bn,
                b.building_name, b.floor_number, b.flat_number, b.geometry,
+               va.bangla_voter_area_name AS voter_area_name,
+               va.village_name           AS voter_area_village,
                EXISTS (SELECT 1 FROM canvassing c WHERE c.building_id = b.building_id) AS canvassed
           FROM buildings b
+          LEFT JOIN voter_areas va ON va.voter_area_id = b.voter_area_id
          WHERE b.voter_area_id = $1
         `,
         [voterAreaId]

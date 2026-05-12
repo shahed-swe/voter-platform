@@ -29,6 +29,18 @@ async function byVoterArea(req, res) {
     res.json({ success: true, voters });
 }
 
+async function byVoterAreas(req, res) {
+    const { areas = [], status, search, limit, offset } = req.body || {};
+    const result = await voterModel.byVoterAreas({
+        areas,
+        status,
+        search,
+        limit: limit ? parseInt(limit, 10) : 500,
+        offset: offset ? parseInt(offset, 10) : 0,
+    });
+    res.json({ success: true, ...result });
+}
+
 async function listVoterAreas(_req, res) {
     const areas = await voterModel.listVoterAreas();
     res.json({ success: true, voter_areas: areas });
@@ -50,6 +62,7 @@ module.exports = {
     search,
     byVillage,
     byVoterArea,
+    byVoterAreas,
     listVoterAreas,
     voterAreaStats,
     aggregatedStats,

@@ -4,8 +4,8 @@ import AppHeader from './AppHeader.jsx';
 export default function AppLayout() {
     const { pathname } = useLocation();
 
-    // Dashboard is full-bleed (map driven). Other pages get padding.
-    const fullBleed = pathname.startsWith('/dashboard');
+    // Dashboard + Canvassing are full-bleed (map driven). Other pages get padding.
+    const fullBleed = pathname.startsWith('/dashboard') || pathname.startsWith('/canvassing');
 
     return (
         <div className="h-screen flex flex-col bg-gray-50 overflow-hidden">
