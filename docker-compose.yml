@@ -1,0 +1,97 @@
+name: voter-platform
+
+services:
+    postgres:
+        image: postgres:16-alpine
+        restart: unless-stopped
+        environment:
+            POSTGRES_USER: ${POSTGRES_USER:-voter}
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-voter}
+            POSTGRES_DB: ${POSTGRES_DB:-voter_platform}
+        ports:
+            - "${POSTGRES_PORT:-5432}:5432"
+        volumes:
+            - pgdata:/var/lib/postgresql/data
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-voter} -d ${POSTGRES_DB:-voter_platform}"]
+            interval: 5s
+            timeout: 5s
+            retries: 10
+
+    # One-shot migration runner. Exits 0 after applying migrations.
+    migrate:
+        build:
+            context: ./server
+        depends_on:
+            postgres:
+                condition: service_healthy
+        environment:
+            DATABASE_URL: postgres://${POSTGRES_USER:-voter}:${POSTGRES_PASSWORD:-voter}@postgres:5432/${POSTGRES_DB:-voter_platform}
+        command: ["node", "src/db/migrate.js", "up"]
+        restart: "no"
+
+    server:
+        build:
+            context: ./server
+        depends_on:
+            postgres:
+                condition: service_healthy
+            migrate:
+                condition: service_completed_successfully
+        environment:
+            NODE_ENV: ${NODE_ENV:-production}
+            PORT: 3000
+            TENANT_ID: ${TENANT_ID:-dhaka13}
+            TENANT_NAME: ${TENANT_NAME:-Voter Survey Platform}
+            TENANT_PUBLIC_URL: ${TENANT_PUBLIC_URL:-http://localhost:3000}
+            DATABASE_URL: postgres://${POSTGRES_USER:-voter}:${POSTGRES_PASSWORD:-voter}@postgres:5432/${POSTGRES_DB:-voter_platform}
+            JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+            JWT_EXPIRY: ${JWT_EXPIRY:-7d}
+            BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-10}
+            ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+            EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
+            EMAIL_SERVICE: ${EMAIL_SERVICE:-gmail}
+            EMAIL_USER: ${EMAIL_USER:-}
+            EMAIL_PASS: ${EMAIL_PASS:-}
+            EMAIL_FROM: ${EMAIL_FROM:-}
+            SMS_ENABLED: ${SMS_ENABLED:-false}
+            SMS_API_URL: ${SMS_API_URL:-http://bulksmsbd.net/api/smsapi}
+            SMS_API_KEY: ${SMS_API_KEY:-}
+            SMS_SENDER_ID: ${SMS_SENDER_ID:-}
+            UPLOAD_DIR: uploads
+            MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-52428800}
+        ports:
+            - "${PORT:-3000}:3000"
+        volumes:
+            - uploads:/app/uploads
+        restart: unless-stopped
+        healthcheck:
+            test: ["CMD-SHELL", "wget -qO- http://localhost:3000/healthz || exit 1"]
+            interval: 10s
+            timeout: 3s
+            retries: 5
+
+    # ---------------------------------------------------------------
+    # Optional staging database for one-shot data imports from legacy
+    # systems. Enable with:  docker compose --profile import up -d staging
+    # Then restore your pg_dump into it and run `npm run import:legacy`
+    # with SOURCE_DATABASE_URL pointed here.
+    # ---------------------------------------------------------------
+    staging:
+        image: postgis/postgis:16-3.4-alpine
+        profiles: ["import"]
+        restart: unless-stopped
+        environment:
+            POSTGRES_USER: staging
+            POSTGRES_PASSWORD: staging
+            POSTGRES_DB: legacy
+        ports:
+            - "${STAGING_PORT:-5433}:5432"
+        volumes:
+            - stagingdata:/var/lib/postgresql/data
+            - ./imports:/imports        # drop your dump.sql here, then \i /imports/dump.sql
+
+volumes:
+    pgdata:
+    uploads:
+    stagingdata:

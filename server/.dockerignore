@@ -1,0 +1,15 @@
+node_modules
+npm-debug.log
+.env
+.env.local
+.env.*.local
+.DS_Store
+*.log
+uploads/photos/*
+uploads/audio/*
+!uploads/photos/.gitkeep
+!uploads/audio/.gitkeep
+.git
+.gitignore
+Dockerfile
+.dockerignore
