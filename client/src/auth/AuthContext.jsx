@@ -39,7 +39,14 @@ export function AuthProvider({ children }) {
     const logout = useCallback(() => {
         persist(null, null, null);
         setState({ token: null, user: null, candidate: null, loading: false });
-        try { authApi.logout(); } catch { /* ignore */ }
+        // NOTE: we deliberately don't call authApi.logout(). The backend's
+        // /auth/logout is a no-op (just returns success) and JWTs are
+        // stateless — invalidation happens here by dropping the token from
+        // localStorage. Calling the API would send a request with no
+        // Authorization header (we just cleared it), the server returns 401,
+        // the response interceptor calls onUnauthorized → which calls logout
+        // → which calls the API again → infinite loop that breaks the next
+        // login attempt until the user hard-refreshes.
     }, [persist]);
 
     useEffect(() => {
