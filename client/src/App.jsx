@@ -10,6 +10,7 @@ import ElectionResultsPage from './pages/ElectionResultsPage.jsx';
 import AdminPage from './pages/AdminPage.jsx';
 import CandidatesListPage from './pages/admin/CandidatesListPage.jsx';
 import CreateCandidatePage from './pages/admin/CreateCandidatePage.jsx';
+import ImportDataPage from './pages/admin/ImportDataPage.jsx';
 import NotFoundPage from './pages/NotFoundPage.jsx';
 
 export default function App() {
@@ -51,6 +52,14 @@ export default function App() {
                     element={
                         <ProtectedRoute requireSuperAdmin>
                             <CreateCandidatePage />
+                        </ProtectedRoute>
+                    }
+                />
+                <Route
+                    path="/admin/import"
+                    element={
+                        <ProtectedRoute requireSuperAdmin>
+                            <ImportDataPage />
                         </ProtectedRoute>
                     }
                 />

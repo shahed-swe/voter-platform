@@ -48,13 +48,9 @@ async function create(req, res) {
     if (!/^[a-z][a-z0-9-]{1,40}$/i.test(candidate_id)) {
         throw new ValidationError('candidate_id must be a slug: letters / digits / hyphens, starting with a letter');
     }
-    if (!Array.isArray(filter_config) || filter_config.length === 0) {
-        throw new ValidationError('filter_config must be a non-empty array');
-    }
-    if (!map_config || typeof map_config !== 'object') {
-        throw new ValidationError('map_config must be an object');
-    }
-
+    // filter_config / map_config are optional at create time. For wizard-onboarded
+    // candidates they're populated later: map_config by the layer designer
+    // (PUT /layer-definitions), filter_config once voter data is mapped.
     const exists = await candidateModel.findById(candidate_id);
     if (exists) throw new ValidationError(`Candidate '${candidate_id}' already exists`);
 
@@ -63,8 +59,8 @@ async function create(req, res) {
         name, constituency, title, subtitle,
         logoUrl: logo_url,
         theme,
-        filterConfig: filter_config,
-        mapConfig: map_config,
+        filterConfig: Array.isArray(filter_config) ? filter_config : [],
+        mapConfig: (map_config && typeof map_config === 'object') ? map_config : { layers: [] },
         createdBy: req.user.user_id,
     });
 

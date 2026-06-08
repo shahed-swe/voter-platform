@@ -6,13 +6,25 @@ import { LoadingState, ErrorState, EmptyState } from '../../components/LoadingSt
 import { useAuth } from '../../auth/AuthContext.jsx';
 
 export default function CandidatesListPage() {
-    const { user } = useAuth();
+    const { user, switchCandidate } = useAuth();
     const [list, setList]       = useState(null);
     const [error, setError]     = useState(null);
+    const [busy, setBusy]       = useState(null);
 
     useEffect(() => {
         candidatesApi.list().then(setList).catch(setError);
     }, []);
+
+    // Switch into a candidate, then go to its data-import page.
+    async function manageData(candidateId) {
+        setBusy(candidateId);
+        try {
+            await switchCandidate(candidateId);
+            window.location.assign('/admin/import');
+        } catch (e) {
+            setError(e); setBusy(null);
+        }
+    }
 
     if (!user?.is_super_admin) {
         return <ErrorState error={{ message: 'Super-admin only' }} />;
@@ -73,6 +85,15 @@ export default function CandidatesListPage() {
                                     <dd>{(c.filter_config || []).length} configured</dd>
                                 </div>
                             </dl>
+
+                            <button
+                                className="btn-secondary w-full mt-3 text-sm"
+                                onClick={() => manageData(c.candidate_id)}
+                                disabled={busy === c.candidate_id}
+                            >
+                                <i className="fas fa-database" />
+                                {busy === c.candidate_id ? 'Opening…' : 'Manage data'}
+                            </button>
                         </div>
                     ))}
                 </div>
