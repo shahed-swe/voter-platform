@@ -9,6 +9,7 @@ const c = require('../controllers/candidateController');
 router.get('/',                              asyncHandler(c.list));
 router.get('/:candidate_id',                 asyncHandler(c.getOne));
 router.post('/',                             asyncHandler(c.create));
+router.delete('/:candidate_id',              asyncHandler(c.remove));
 router.post('/:candidate_id/users',          asyncHandler(c.grantUser));
 router.delete('/:candidate_id/users/:user_id', asyncHandler(c.revokeUser));
 

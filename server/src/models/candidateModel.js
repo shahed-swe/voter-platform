@@ -78,6 +78,20 @@ async function updateFilterConfig(candidateId, filterConfig) {
     );
 }
 
+/**
+ * Hard-delete a candidate and ALL its data. Every data table carries a
+ * candidate_id FK with ON DELETE CASCADE, so voters / villages / wards /
+ * voter_areas / buildings / polling_stations / canvassing / geo_layers /
+ * layer_definitions / user_candidates rows all go with it.
+ */
+async function remove(candidateId) {
+    const { rowCount } = await query(
+        `DELETE FROM candidates WHERE candidate_id = $1`,
+        [candidateId]
+    );
+    return rowCount > 0;
+}
+
 module.exports = {
     findById,
     listActive,
@@ -88,4 +102,5 @@ module.exports = {
     grantUserAccess,
     revokeUserAccess,
     updateFilterConfig,
+    remove,
 };

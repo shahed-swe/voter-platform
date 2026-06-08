@@ -2,18 +2,20 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import * as candidatesApi from '../../api/candidates.js';
 import PageHeader from '../../components/PageHeader.jsx';
-import { LoadingState, ErrorState, EmptyState } from '../../components/LoadingState.jsx';
+import { LoadingState, ErrorState, EmptyState, Spinner } from '../../components/LoadingState.jsx';
 import { useAuth } from '../../auth/AuthContext.jsx';
 
 export default function CandidatesListPage() {
-    const { user, switchCandidate } = useAuth();
+    const { user, switchCandidate, candidate } = useAuth();
     const [list, setList]       = useState(null);
     const [error, setError]     = useState(null);
     const [busy, setBusy]       = useState(null);
+    const [delTarget, setDelTarget] = useState(null); // candidate object pending delete
 
-    useEffect(() => {
+    function reload() {
         candidatesApi.list().then(setList).catch(setError);
-    }, []);
+    }
+    useEffect(() => { reload(); }, []);
 
     // Switch into a candidate, then go to its data-import page.
     async function manageData(candidateId) {
@@ -86,18 +88,88 @@ export default function CandidatesListPage() {
                                 </div>
                             </dl>
 
-                            <button
-                                className="btn-secondary w-full mt-3 text-sm"
-                                onClick={() => manageData(c.candidate_id)}
-                                disabled={busy === c.candidate_id}
-                            >
-                                <i className="fas fa-database" />
-                                {busy === c.candidate_id ? 'Opening…' : 'Manage data'}
-                            </button>
+                            <div className="flex gap-2 mt-3">
+                                <button
+                                    className="btn-secondary flex-1 text-sm"
+                                    onClick={() => manageData(c.candidate_id)}
+                                    disabled={busy === c.candidate_id}
+                                >
+                                    <i className="fas fa-database" />
+                                    {busy === c.candidate_id ? 'Opening…' : 'Manage data'}
+                                </button>
+                                <button
+                                    className="btn-danger text-sm px-3"
+                                    title="Delete candidate"
+                                    onClick={() => setDelTarget(c)}
+                                >
+                                    <i className="fas fa-trash" />
+                                </button>
+                            </div>
                         </div>
                     ))}
                 </div>
             )}
+
+            {delTarget && (
+                <DeleteDialog
+                    candidate={delTarget}
+                    isActive={candidate?.candidate_id === delTarget.candidate_id}
+                    onClose={() => setDelTarget(null)}
+                    onDeleted={() => { setDelTarget(null); reload(); }}
+                />
+            )}
         </>
+    );
+}
+
+function DeleteDialog({ candidate, isActive, onClose, onDeleted }) {
+    const [confirm, setConfirm] = useState('');
+    const [busy, setBusy]       = useState(false);
+    const [err, setErr]         = useState(null);
+    const match = confirm.trim() === candidate.candidate_id;
+
+    async function doDelete() {
+        setBusy(true); setErr(null);
+        try {
+            await candidatesApi.remove(candidate.candidate_id);
+            onDeleted();
+        } catch (e) {
+            setErr(e.response?.data?.error || e.message);
+            setBusy(false);
+        }
+    }
+
+    return (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[2000]">
+            <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+                <div className="px-5 py-3 border-b border-gray-200 flex items-center justify-between">
+                    <h3 className="font-semibold text-red-700"><i className="fas fa-triangle-exclamation mr-2" />Delete candidate</h3>
+                    <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><i className="fas fa-times" /></button>
+                </div>
+                <div className="p-5 space-y-3 text-sm">
+                    <p>
+                        This permanently deletes <strong>{candidate.title}</strong> ({candidate.candidate_id})
+                        and <strong>all of its data</strong> — voters, villages, wards, voter areas,
+                        buildings, polling stations, canvassing records and layers. This cannot be undone.
+                    </p>
+                    {isActive && (
+                        <p className="bg-yellow-50 border border-yellow-200 text-yellow-800 rounded p-2 text-xs">
+                            This is your currently active candidate. After deleting, switch to another one.
+                        </p>
+                    )}
+                    <div>
+                        <label className="input-label">Type <code className="bg-gray-100 px-1 rounded">{candidate.candidate_id}</code> to confirm</label>
+                        <input className="input-field font-mono" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoFocus />
+                    </div>
+                    {err && <div className="text-red-600 text-xs">{err}</div>}
+                </div>
+                <div className="px-5 py-3 border-t border-gray-200 flex justify-end gap-2">
+                    <button className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button>
+                    <button className="btn-danger" onClick={doDelete} disabled={!match || busy}>
+                        {busy ? <Spinner size="sm" /> : <i className="fas fa-trash" />} Delete permanently
+                    </button>
+                </div>
+            </div>
+        </div>
     );
 }

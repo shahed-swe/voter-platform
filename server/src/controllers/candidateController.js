@@ -105,4 +105,20 @@ async function revokeUser(req, res) {
     res.json({ success: true });
 }
 
-module.exports = { list, getOne, create, grantUser, revokeUser };
+/**
+ * DELETE /api/candidates/:candidate_id   (super-admin only)
+ * Destructive: removes the candidate and ALL its data (cascade). The client
+ * must echo the slug as ?confirm=<candidate_id> to guard against accidents.
+ */
+async function remove(req, res) {
+    if (!req.user?.is_super_admin) throw new ForbiddenError('Super-admin only');
+    const { candidate_id } = req.params;
+    if (req.query.confirm !== candidate_id) {
+        throw new ValidationError('Confirmation mismatch — pass ?confirm=<candidate_id> to delete');
+    }
+    const ok = await candidateModel.remove(candidate_id);
+    if (!ok) throw new NotFoundError('Candidate not found');
+    res.json({ success: true });
+}
+
+module.exports = { list, getOne, create, grantUser, revokeUser, remove };
