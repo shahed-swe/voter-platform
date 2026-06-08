@@ -23,6 +23,7 @@
   "dependencies": {
     "@deck.gl/core": "^9.2.2",
     "@deck.gl/layers": "^9.2.2",
+    "adm-zip": "^0.5.16",
     "axios": "^1.12.2",
     "bcryptjs": "^3.0.3",
     "compression": "^1.8.1",
@@ -39,6 +40,7 @@
     "nodemailer": "^7.0.12",
     "pg": "^8.13.1",
     "proj4": "^2.20.0",
+    "shapefile": "^0.6.6",
     "twilio": "^5.10.5"
   },
   "devDependencies": {
