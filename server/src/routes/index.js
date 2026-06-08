@@ -23,5 +23,8 @@ router.use('/cache',       require('./cacheRoutes'));
 router.use('/geo',         require('./geoRoutes'));
 router.use('/urban',       require('./urbanRoutes'));
 router.use('/filter-options', require('./filterOptionsRoutes'));
+// Generic layer endpoints — drive the config-driven <DynamicMap>. Specific
+// /api/geo/* endpoints above remain available for legacy Urban/Rural dashboards.
+router.use('/layers',         require('./layerRoutes'));
 
 module.exports = router;
