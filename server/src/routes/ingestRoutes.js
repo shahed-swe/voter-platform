@@ -6,6 +6,7 @@ const c = require('../controllers/ingestController');
 // Super-admin gate is enforced inside the controller.
 
 router.post('/upload', c.upload.single('file'), asyncHandler(c.uploadAndPreview));
-router.post('/commit', asyncHandler(c.commit));
+router.post('/commit', asyncHandler(c.commit));               // geo layers
+router.post('/commit-voters', asyncHandler(c.commitVoters));  // voters + filters
 
 module.exports = router;

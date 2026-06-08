@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader.jsx';
 import { Spinner, LoadingState, ErrorState } from '../../components/LoadingState.jsx';
 import ColumnMapper from '../../components/onboarding/ColumnMapper.jsx';
+import VoterImport from '../../components/onboarding/VoterImport.jsx';
 import * as onboardingApi from '../../api/onboarding.js';
+import * as analyticsApi from '../../api/analytics.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 
 /**
@@ -14,11 +16,15 @@ import { useAuth } from '../../auth/AuthContext.jsx';
 export default function ImportDataPage() {
     const { user, candidate } = useAuth();
     const [layers, setLayers]   = useState(null);
+    const [voterCount, setVoterCount] = useState(0);
     const [error, setError]     = useState(null);
     const [active, setActive]   = useState(null); // layer_key currently uploading
 
     function reload() {
         onboardingApi.getLayers().then(setLayers).catch(setError);
+        analyticsApi.overview()
+            .then((d) => setVoterCount(Number(d?.overview?.total_voters || 0)))
+            .catch(() => setVoterCount(0));
     }
     useEffect(() => { reload(); }, []);
 
@@ -56,6 +62,11 @@ export default function ImportDataPage() {
                     ))}
                 </div>
             )}
+
+            {/* Voters — always available, independent of geo layers */}
+            <div className="max-w-3xl mt-6">
+                <VoterImport voterCount={voterCount} onImported={reload} />
+            </div>
         </>
     );
 }

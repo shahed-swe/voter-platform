@@ -26,3 +26,14 @@ export const commitIngest = ({ uploadToken, originalName, layerKey, parentLayerK
             mapping,
         })
         .then((r) => r.data);
+
+// Voter CSV → voters table; `filters` (optional) becomes candidate.filter_config.
+export const commitVoters = ({ uploadToken, originalName, mapping, filters }) =>
+    client
+        .post('/ingest/commit-voters', {
+            upload_token: uploadToken,
+            original_name: originalName,
+            mapping,
+            filters,
+        })
+        .then((r) => r.data);

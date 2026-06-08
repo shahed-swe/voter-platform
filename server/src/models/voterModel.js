@@ -175,33 +175,47 @@ const FILTERS = {
     ward:       { via: 'voters',    col: 'ward' },          // dhaka13 voters store ward_number
 };
 
-async function findByFilters(candidateId, { filters = {}, status, search, limit = 500, offset = 0 } = {}) {
+async function findByFilters(candidateId, { filters = {}, specs = [], status, search, limit = 500, offset = 0 } = {}) {
     const where  = ['v.candidate_id = $1'];
     const params = [candidateId];
     let i = 2;
 
+    // Index the candidate's filter_config by key so we can resolve dynamic
+    // (attribute-backed) filters that aren't in the hardcoded FILTERS map.
+    const specByKey = {};
+    for (const s of specs || []) specByKey[s.key] = s;
+
     for (const [key, value] of Object.entries(filters || {})) {
         const empty = value == null || value === '' || (Array.isArray(value) && value.length === 0);
         if (empty) continue;
+        const arr = Array.isArray(value) ? value : [value];
+
+        const dyn = specByKey[key];
+        if (dyn && dyn.source === 'voters_attr' && dyn.value_col) {
+            // attributes->>'<key>' = ANY(values). Attribute name is bound, not interpolated.
+            params.push(dyn.value_col);
+            const keyIdx = params.length;
+            params.push(arr);
+            where.push(`v.attributes->>$${keyIdx} = ANY($${params.length})`);
+            i = params.length + 1;
+            continue;
+        }
 
         const spec = FILTERS[key];
         if (!spec) continue;     // unknown key — controller should already have rejected
-        const arr = Array.isArray(value) ? value : [value];
-
         if (spec.via === 'voters') {
             params.push(arr);
             const col = spec.col === 'union' ? `v."union"` : `v.${spec.col}`;
-            where.push(`${col} = ANY($${i++})`);
+            where.push(`${col} = ANY($${params.length})`);
         } else {
-            // villages-side: filter voter.village_id by a subquery on villages
             params.push(arr);
             const col = spec.col === 'union' ? `"union"` : spec.col;
             where.push(
                 `v.village_id IN (SELECT village_id FROM villages
-                                   WHERE candidate_id = $1 AND ${col} = ANY($${i}))`
+                                   WHERE candidate_id = $1 AND ${col} = ANY($${params.length}))`
             );
-            i++;
         }
+        i = params.length + 1;
     }
 
     if (status) {

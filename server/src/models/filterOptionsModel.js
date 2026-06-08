@@ -24,10 +24,39 @@ function quote(col) {
 }
 
 /**
+ * Special source for wizard-onboarded candidates: distinct values of a JSONB
+ * attribute on the voters table (e.g. attributes->>'Sector'). The attribute
+ * KEY is passed as a bound parameter (never interpolated) so arbitrary /
+ * Bengali column names are safe.
+ */
+async function distinctVoterAttr(candidateId, { valueCol, parentCol, parentValue, limit = 5000 }) {
+    const where = ['candidate_id = $1', `attributes->>$2 IS NOT NULL`, `attributes->>$2 <> ''`];
+    const params = [candidateId, valueCol];
+    if (parentCol && parentValue != null && parentValue !== '') {
+        params.push(parentCol, parentValue);
+        where.push(`attributes->>$${params.length - 1} = $${params.length}`);
+    }
+    const sql = `
+        SELECT attributes->>$2 AS value, attributes->>$2 AS label, COUNT(*) AS count
+          FROM voters
+         WHERE ${where.join(' AND ')}
+         GROUP BY attributes->>$2
+         ORDER BY value
+         LIMIT ${limit}
+    `;
+    return many(sql, params);
+}
+
+/**
  * Returns distinct (value, label) pairs from `source.value_col` for the
  * current candidate. Optionally filters by parent_col=parent_value.
  */
 async function distinctOptions(candidateId, { source, valueCol, labelCol, parentCol, parentValue, limit = 5000 }) {
+    // Dynamic attribute source — value_col is the JSONB key, not a real column.
+    if (source === 'voters_attr') {
+        return distinctVoterAttr(candidateId, { valueCol, parentCol, parentValue, limit });
+    }
+
     if (!ALLOWED[source]) throw new Error(`unknown source: ${source}`);
     const cols = ALLOWED[source];
 

@@ -74,7 +74,8 @@ async function filtered(req, res) {
 
     // Validate keys against candidate.filter_config
     const candidate = await candidateModel.findById(candidateId);
-    const allowed = new Set((candidate?.filter_config || []).map((f) => f.key));
+    const specs = candidate?.filter_config || [];
+    const allowed = new Set(specs.map((f) => f.key));
     for (const key of Object.keys(filters)) {
         if (!allowed.has(key)) {
             throw new ValidationError(`Filter '${key}' is not configured for this candidate`);
@@ -83,6 +84,7 @@ async function filtered(req, res) {
 
     const result = await voterModel.findByFilters(candidateId, {
         filters,
+        specs,   // lets the model resolve attribute-backed (voters_attr) filters
         status,
         search,
         limit: limit ? Math.min(parseInt(limit, 10) || 500, 2000) : 500,

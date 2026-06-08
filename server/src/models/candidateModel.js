@@ -69,6 +69,15 @@ async function revokeUserAccess(userId, candidateId) {
     return rowCount > 0;
 }
 
+async function updateFilterConfig(candidateId, filterConfig) {
+    return one(
+        `UPDATE candidates SET filter_config = $2::jsonb, updated_at = NOW()
+          WHERE candidate_id = $1
+        RETURNING ${PUBLIC_FIELDS}`,
+        [candidateId, JSON.stringify(filterConfig || [])]
+    );
+}
+
 module.exports = {
     findById,
     listActive,
@@ -78,4 +87,5 @@ module.exports = {
     create,
     grantUserAccess,
     revokeUserAccess,
+    updateFilterConfig,
 };

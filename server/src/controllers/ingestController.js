@@ -5,6 +5,7 @@ const multer = require('multer');
 const config = require('../config');
 const parsers = require('../services/ingest/parsers');
 const { ingestGeoLayer } = require('../services/ingest/geoLayerIngest');
+const { ingestVoters } = require('../services/ingest/voterIngest');
 const candidateModel = require('../models/candidateModel');
 const layerDefModel = require('../models/layerDefinitionModel');
 const { ForbiddenError, ValidationError, NotFoundError } = require('../utils/errors');
@@ -109,8 +110,41 @@ async function commit(req, res) {
     res.json({ success: true, layer_key, inserted, map_config });
 }
 
+/**
+ * POST /api/ingest/commit-voters
+ * Body: { upload_token, original_name, mapping, filters? }
+ *   mapping: { <fixedTarget>: <sourceColumn> } for the voters table
+ *   filters: optional array of filter specs to set on candidates.filter_config
+ *            (the left-panel filter designer output)
+ */
+async function commitVoters(req, res) {
+    requireSuper(req);
+    const candidateId = req.candidateId;
+    if (!candidateId) throw new ForbiddenError('Pick a candidate first');
+
+    const { upload_token, original_name, mapping, filters } = req.body || {};
+    if (!upload_token || !mapping) throw new ValidationError('upload_token and mapping are required');
+
+    const filePath = path.join(STAGE_DIR, path.basename(upload_token));
+    if (!fs.existsSync(filePath)) throw new NotFoundError('Upload expired or not found; re-upload');
+
+    const buf = fs.readFileSync(filePath);
+    const parsed = await parsers.parseFile(buf, original_name || upload_token);
+
+    const { inserted } = await ingestVoters({ candidateId, rows: parsed.rows, mapping });
+
+    tryUnlink(filePath);
+
+    // If the operator also designed filters, persist them now.
+    if (Array.isArray(filters)) {
+        await candidateModel.updateFilterConfig(candidateId, filters);
+    }
+
+    res.json({ success: true, inserted, filters_saved: Array.isArray(filters) ? filters.length : 0 });
+}
+
 function tryUnlink(p) {
     try { if (p && fs.existsSync(p)) fs.unlinkSync(p); } catch { /* ignore */ }
 }
 
-module.exports = { upload, uploadAndPreview, commit };
+module.exports = { upload, uploadAndPreview, commit, commitVoters };
