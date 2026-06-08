@@ -7,5 +7,6 @@ const c = require('../controllers/layerDefinitionController');
 
 router.get('/', asyncHandler(c.list));
 router.put('/', asyncHandler(c.replaceAll));
+router.put('/filters', asyncHandler(c.saveFilters));
 
 module.exports = router;

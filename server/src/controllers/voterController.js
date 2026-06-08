@@ -93,6 +93,11 @@ async function filtered(req, res) {
     res.json({ success: true, ...result });
 }
 
+/** GET /api/voters/attribute-keys — distinct voter attribute columns for the filter designer */
+async function attributeKeys(req, res) {
+    res.json({ success: true, keys: await voterModel.attributeKeys(tenant(req)) });
+}
+
 module.exports = {
     getById,
     search,
@@ -103,4 +108,5 @@ module.exports = {
     listVoterAreas,
     voterAreaStats,
     aggregatedStats,
+    attributeKeys,
 };

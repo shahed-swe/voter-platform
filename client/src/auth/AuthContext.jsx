@@ -101,6 +101,18 @@ export function AuthProvider({ children }) {
         [persist, state.user]
     );
 
+    // Re-fetch the session (e.g. after editing the active candidate's config)
+    // so candidate.filter_config / map_config update without a hard reload.
+    const refresh = useCallback(async () => {
+        if (!state.token) return null;
+        const me = await authApi.me().catch(() => null);
+        if (!me?.user) return null;
+        const cand = me.active_candidate || null;
+        persist(state.token, me.user, cand);
+        setState((s) => ({ ...s, user: me.user, candidate: cand }));
+        return cand;
+    }, [state.token, persist]);
+
     const value = useMemo(
         () => ({
             ...state,
@@ -108,8 +120,9 @@ export function AuthProvider({ children }) {
             login,
             logout,
             switchCandidate,
+            refresh,
         }),
-        [state, login, logout, switchCandidate]
+        [state, login, logout, switchCandidate, refresh]
     );
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -1,4 +1,5 @@
 const layerDefModel = require('../models/layerDefinitionModel');
+const candidateModel = require('../models/candidateModel');
 const { ForbiddenError, ValidationError } = require('../utils/errors');
 
 function tenant(req) {
@@ -44,4 +45,24 @@ async function replaceAll(req, res) {
     res.json({ success: true, map_config: mapConfig });
 }
 
-module.exports = { list, replaceAll };
+/**
+ * PUT /api/layer-definitions/filters
+ * Body: { filters: [ { key, label, type, source, value_col, ... } ] }
+ * Saves candidate.filter_config (drives the left-panel filters). Lets an
+ * operator add/remove filters without re-importing voters.
+ */
+async function saveFilters(req, res) {
+    requireSuper(req);
+    const { filters } = req.body || {};
+    if (!Array.isArray(filters)) throw new ValidationError('filters must be an array');
+    const keys = new Set();
+    for (const f of filters) {
+        if (!f.key) throw new ValidationError('each filter needs a key');
+        if (keys.has(f.key)) throw new ValidationError(`duplicate filter key: ${f.key}`);
+        keys.add(f.key);
+    }
+    const candidate = await candidateModel.updateFilterConfig(tenant(req), filters);
+    res.json({ success: true, filter_config: candidate.filter_config });
+}
+
+module.exports = { list, replaceAll, saveFilters };

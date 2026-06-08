@@ -7,6 +7,13 @@ export const getLayers = () =>
 export const saveLayers = (layers) =>
     client.put('/layer-definitions', { layers }).then((r) => r.data);
 
+// ---- Filters (left-panel) ----
+export const getVoterAttributeKeys = () =>
+    client.get('/voters/attribute-keys').then((r) => r.data?.keys || []);
+
+export const saveFilters = (filters) =>
+    client.put('/layer-definitions/filters', { filters }).then((r) => r.data);
+
 // ---- Data ingest (upload → preview → commit) ----
 export const uploadPreview = (file) => {
     const form = new FormData();

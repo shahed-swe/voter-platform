@@ -5,6 +5,7 @@ const c = require('../controllers/voterController');
 
 router.use(verifyToken);
 
+router.get('/attribute-keys', asyncHandler(c.attributeKeys));
 router.get('/areas', asyncHandler(c.listVoterAreas));
 router.get('/areas/:voter_area/stats', asyncHandler(c.voterAreaStats));
 router.get('/by-village/:village_id', asyncHandler(c.byVillage));

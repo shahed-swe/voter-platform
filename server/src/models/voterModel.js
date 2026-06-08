@@ -257,6 +257,26 @@ async function findByFilters(candidateId, { filters = {}, specs = [], status, se
     return { voters, stats };
 }
 
+/**
+ * Distinct attribute keys present on this candidate's voters, with how many
+ * distinct values each has + 3 sample values. Powers the filter designer so an
+ * operator can turn any voter column into a left-panel filter without
+ * re-uploading. Heavy text columns (names, addresses) are included but a high
+ * distinct count signals they're poor filter candidates.
+ */
+async function attributeKeys(candidateId, { sampleLimit = 3 } = {}) {
+    return many(
+        `SELECT k AS key,
+                COUNT(DISTINCT v.attributes->>k) AS distinct_values,
+                (array_agg(DISTINCT v.attributes->>k))[1:$2] AS samples
+           FROM voters v, jsonb_object_keys(v.attributes) k
+          WHERE v.candidate_id = $1 AND v.attributes->>k IS NOT NULL AND v.attributes->>k <> ''
+          GROUP BY k
+          ORDER BY distinct_values ASC`,
+        [candidateId, sampleLimit]
+    );
+}
+
 module.exports = {
     findById,
     findBySosVid,
@@ -268,5 +288,6 @@ module.exports = {
     listVoterAreas,
     voterAreaStats,
     aggregatedStatistics,
+    attributeKeys,
     markVisited,
 };
