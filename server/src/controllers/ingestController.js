@@ -73,7 +73,8 @@ async function commit(req, res) {
     const candidateId = req.candidateId;
     if (!candidateId) throw new ForbiddenError('Pick a candidate first');
 
-    const { upload_token, original_name, layer_key, parent_layer_key, mapping } = req.body || {};
+    const { upload_token, original_name, layer_key, parent_layer_key, mapping,
+            parent_feature_id_fixed } = req.body || {};
     if (!upload_token || !layer_key || !mapping) {
         throw new ValidationError('upload_token, layer_key and mapping are required');
     }
@@ -93,6 +94,7 @@ async function commit(req, res) {
         parentLayerKey: parent_layer_key || null,
         rows: parsed.rows,
         mapping,
+        parentFeatureIdFixed: parent_feature_id_fixed || null,
     });
 
     tryUnlink(filePath); // clean up staged file after successful ingest

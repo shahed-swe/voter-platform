@@ -4,8 +4,10 @@ import PageHeader from '../../components/PageHeader.jsx';
 import { Spinner, LoadingState, ErrorState } from '../../components/LoadingState.jsx';
 import ColumnMapper from '../../components/onboarding/ColumnMapper.jsx';
 import VoterImport from '../../components/onboarding/VoterImport.jsx';
+import LayerDesigner from '../../components/onboarding/LayerDesigner.jsx';
 import * as onboardingApi from '../../api/onboarding.js';
 import * as analyticsApi from '../../api/analytics.js';
+import * as layersApi from '../../api/layers.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 
 /**
@@ -19,6 +21,9 @@ export default function ImportDataPage() {
     const [voterCount, setVoterCount] = useState(0);
     const [error, setError]     = useState(null);
     const [active, setActive]   = useState(null); // layer_key currently uploading
+    const [editing, setEditing] = useState(false); // editing the layer catalog
+    const [draft, setDraft]     = useState([]);
+    const [savingLayers, setSavingLayers] = useState(false);
 
     function reload() {
         onboardingApi.getLayers().then(setLayers).catch(setError);
@@ -27,6 +32,34 @@ export default function ImportDataPage() {
             .catch(() => setVoterCount(0));
     }
     useEffect(() => { reload(); }, []);
+
+    function openEditor() {
+        // Seed the designer with the existing catalog
+        setDraft((layers || []).map((l) => ({
+            layer_key: l.layer_key,
+            display_name: l.display_name,
+            parent_layer_key: l.parent_layer_key,
+            geometry_type: l.geometry_type,
+            is_leaf: l.is_leaf,
+            is_overlay: l.is_overlay,
+            click_action: l.click_action,
+            color_by: l.color_by,
+        })));
+        setEditing(true);
+    }
+
+    async function saveLayers() {
+        setSavingLayers(true); setError(null);
+        try {
+            await onboardingApi.saveLayers(draft);
+            setEditing(false);
+            reload();
+        } catch (e) {
+            setError(e);
+        } finally {
+            setSavingLayers(false);
+        }
+    }
 
     if (!user?.is_super_admin) return <ErrorState error={{ message: 'Super-admin only' }} />;
     if (error) return <ErrorState error={error} />;
@@ -38,15 +71,37 @@ export default function ImportDataPage() {
                 title={`Import data — ${candidate?.title || ''}`}
                 subtitle="Upload a map file for each layer, map its columns, and commit."
                 actions={
-                    <Link to="/dashboard" className="btn-primary">
-                        <i className="fas fa-check" /> Done — go to dashboard
-                    </Link>
+                    <div className="flex gap-2">
+                        <button className="btn-secondary" onClick={editing ? () => setEditing(false) : openEditor}>
+                            <i className="fas fa-layer-group" /> {editing ? 'Cancel' : 'Edit layers'}
+                        </button>
+                        <Link to="/dashboard" className="btn-primary">
+                            <i className="fas fa-check" /> Done
+                        </Link>
+                    </div>
                 }
             />
 
+            {editing && (
+                <div className="card max-w-3xl mb-6">
+                    <h3 className="card-title">Edit layer hierarchy</h3>
+                    <p className="text-xs text-gray-500 mb-3">
+                        Add, remove, reorder, or reconfigure layers. Existing imported data is kept
+                        for any layer you don't remove. (Removing a layer deletes its features.)
+                    </p>
+                    <LayerDesigner value={draft} onChange={setDraft} />
+                    <div className="flex justify-end gap-2 mt-4">
+                        <button className="btn-secondary" onClick={() => setEditing(false)}>Cancel</button>
+                        <button className="btn-primary" onClick={saveLayers} disabled={savingLayers}>
+                            {savingLayers ? <Spinner size="sm" /> : <i className="fas fa-save" />} Save layers
+                        </button>
+                    </div>
+                </div>
+            )}
+
             {layers.length === 0 ? (
                 <div className="card text-sm text-gray-500">
-                    This candidate has no layers defined. <Link className="text-brand underline" to="/admin/candidates/new">Create one with layers first.</Link>
+                    This candidate has no layers defined yet. Use <strong>Edit layers</strong> above to add some.
                 </div>
             ) : (
                 <div className="space-y-3 max-w-3xl">
@@ -79,8 +134,25 @@ function LayerImportRow({ layer, layers, expanded, onToggle, onImported }) {
     const [committing, setCommitting] = useState(false);
     const [err, setErr]           = useState(null);
     const [done, setDone]         = useState(null);
+    // Parent linking: 'column' = map from a column, 'fixed' = all rows share one parent
+    const [parentMode, setParentMode]   = useState('column');
+    const [fixedParent, setFixedParent] = useState('');
+    const [parentFeatures, setParentFeatures] = useState([]);
 
     const parentLayer = layers.find((x) => x.layer_key === layer.parent_layer_key);
+
+    // Load the parent layer's features (for the "all belong to one" dropdown)
+    useEffect(() => {
+        if (!expanded || !parentLayer) return;
+        layersApi.fetchSource(`geo:${parentLayer.layer_key}`)
+            .then((fc) => setParentFeatures(
+                (fc.features || []).map((f) => ({
+                    id: String(f.properties.feature_id),
+                    name: f.properties.name || f.properties.feature_id,
+                }))
+            ))
+            .catch(() => setParentFeatures([]));
+    }, [expanded, parentLayer]);
 
     async function doUpload(f) {
         setFile(f); setErr(null); setPreview(null); setDone(null);
@@ -122,6 +194,7 @@ function LayerImportRow({ layer, layers, expanded, onToggle, onImported }) {
                 layerKey: layer.layer_key,
                 parentLayerKey: layer.parent_layer_key,
                 mapping,
+                parentFeatureIdFixed: parentMode === 'fixed' ? fixedParent : null,
             });
             setDone(res.inserted);
             setPreview(null);
@@ -175,15 +248,39 @@ function LayerImportRow({ layer, layers, expanded, onToggle, onImported }) {
                                 {preview.hasGeometry ? ' · geometry ✓' : ' · no geometry'}
                             </div>
                             {parentLayer && (
-                                <div className={`text-xs rounded p-2 border ${
-                                    mapping.parent_feature_id
-                                        ? 'bg-green-50 border-green-200 text-green-700'
-                                        : 'bg-yellow-50 border-yellow-300 text-yellow-800'
-                                }`}>
-                                    <i className={`fas ${mapping.parent_feature_id ? 'fa-link' : 'fa-triangle-exclamation'} mr-1`} />
-                                    {mapping.parent_feature_id
-                                        ? <>Parent link set: <strong>{mapping.parent_feature_id}</strong> → {parentLayer.display_name}. Drill-down will work.</>
-                                        : <>This layer nests under <strong>{parentLayer.display_name}</strong>. Set <strong>Parent link</strong> below to the column holding the {parentLayer.display_name} id, or clicking {parentLayer.display_name} won't reveal these.</>}
+                                <div className="border border-gray-200 rounded-md p-3 bg-gray-50 space-y-2">
+                                    <div className="text-sm font-medium text-gray-700">
+                                        Link to parent ({parentLayer.display_name})
+                                    </div>
+                                    <div className="flex gap-4 text-sm">
+                                        <label className="flex items-center gap-1.5">
+                                            <input type="radio" className="accent-brand" checked={parentMode === 'column'} onChange={() => setParentMode('column')} />
+                                            From a column
+                                        </label>
+                                        <label className="flex items-center gap-1.5">
+                                            <input type="radio" className="accent-brand" checked={parentMode === 'fixed'} onChange={() => setParentMode('fixed')} />
+                                            All belong to one {parentLayer.display_name}
+                                        </label>
+                                    </div>
+                                    {parentMode === 'column' ? (
+                                        <p className="text-xs text-gray-500">
+                                            Set <strong>Parent link</strong> in the column map below to the column holding the {parentLayer.display_name} id.
+                                            {mapping.parent_feature_id
+                                                ? <span className="text-green-700"> ✓ using "{mapping.parent_feature_id}"</span>
+                                                : <span className="text-yellow-700"> — not set yet</span>}
+                                        </p>
+                                    ) : (
+                                        <select
+                                            className="input-field"
+                                            value={fixedParent}
+                                            onChange={(e) => setFixedParent(e.target.value)}
+                                        >
+                                            <option value="">Select the {parentLayer.display_name} all these belong to…</option>
+                                            {parentFeatures.map((p) => (
+                                                <option key={p.id} value={p.id}>{p.name} (id {p.id})</option>
+                                            ))}
+                                        </select>
+                                    )}
                                 </div>
                             )}
                             <ColumnMapper

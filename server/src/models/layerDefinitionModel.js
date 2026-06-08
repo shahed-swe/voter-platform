@@ -30,8 +30,11 @@ async function replaceAll(candidateId, layers) {
             await client.query(
                 `INSERT INTO layer_definitions
                    (candidate_id, layer_key, display_name, display_name_bn, parent_layer_key,
-                    ordinal, geometry_type, is_leaf, click_action, color_by, style)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)`,
+                    ordinal, geometry_type, is_leaf, is_overlay, click_action, color_by, style,
+                    row_count)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,
+                    COALESCE((SELECT COUNT(*) FROM geo_layers
+                               WHERE candidate_id = $1 AND layer_key = $2), 0))`,
                 [
                     candidateId,
                     l.layer_key,
@@ -41,6 +44,7 @@ async function replaceAll(candidateId, layers) {
                     ordinal++,
                     l.geometry_type === 'point' ? 'point' : 'polygon',
                     !!l.is_leaf,
+                    !!l.is_overlay,
                     l.click_action || (l.is_leaf ? 'select' : 'drill'),
                     l.color_by || 'uniform',
                     JSON.stringify(l.style || {}),
@@ -72,6 +76,7 @@ async function buildMapConfig(client, candidateId) {
     const layers = rows.map((r) => {
         const layer = {
             id:         r.layer_key,
+            label:      r.display_name || r.layer_key,
             source:     `geo:${r.layer_key}`,   // generic store
             parent:     r.parent_layer_key || null,
             // For geo: sources the child is fetched by parent_feature_id, so the
@@ -81,6 +86,8 @@ async function buildMapConfig(client, candidateId) {
             label_from: 'name',
             click:      r.click_action || (r.is_leaf ? 'select' : 'drill'),
             color_by:   r.color_by || 'uniform',
+            geometry_type: r.geometry_type || 'polygon',
+            overlay:    !!r.is_overlay,
             style:      r.style || {},
         };
         if (r.color_by === 'bucket') {

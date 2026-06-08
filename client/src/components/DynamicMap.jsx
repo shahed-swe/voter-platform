@@ -1,11 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import L from 'leaflet';
-import { MapContainer, TileLayer, GeoJSON, useMap, LayersControl } from 'react-leaflet';
+import { MapContainer, TileLayer, GeoJSON, useMap, LayersControl, Marker, Popup } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 
 import * as layersApi from '../api/layers.js';
 import CanvassedVotersModal from './dashboard/CanvassedVotersModal.jsx';
 import { LoadingState, ErrorState } from './LoadingState.jsx';
+
+// Red teardrop pin for overlay point layers (e.g. polling stations)
+const overlayPin = L.divIcon({
+    className: '',
+    html: '<div style="background:#C62828;width:16px;height:16px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:2px solid #fff;box-shadow:0 1px 2px rgba(0,0,0,0.3)"></div>',
+    iconSize: [16, 16],
+    iconAnchor: [8, 16],
+});
 
 // ----- Style helpers -------------------------------------------------------
 
@@ -82,7 +90,11 @@ export default function DynamicMap({
     candidateId,    // used as cache key so switching candidates clears state
     height,
 }) {
-    const layersSpec = Array.isArray(config?.layers) ? config.layers : [];
+    const allLayers = Array.isArray(config?.layers) ? config.layers : [];
+    // Drill layers form the click-to-drill hierarchy; overlay layers are
+    // toggleable marker layers (e.g. polling stations) shown on top.
+    const layersSpec    = allLayers.filter((l) => !l.overlay);
+    const overlayLayers = allLayers.filter((l) => l.overlay);
     const center = config?.center || [23.78, 90.34];
     const zoom   = config?.zoom   || 12;
 
@@ -91,13 +103,28 @@ export default function DynamicMap({
     const [loading, setLoading]         = useState(false);
     const [error, setError]             = useState(null);
     const [activeBuilding, setActiveBuilding] = useState(null);
+    const [overlayOn, setOverlayOn]     = useState({});  // overlayId → bool
+    const [overlayData, setOverlayData] = useState({});  // overlayId → FeatureCollection
 
     // Reset stack when candidate changes
     useEffect(() => {
         setDrillStack([]);
         setDataByLayer({});
         setActiveBuilding(null);
-    }, [candidateId, JSON.stringify(layersSpec.map((l) => l.id))]);
+        setOverlayOn({});
+        setOverlayData({});
+    }, [candidateId, JSON.stringify(allLayers.map((l) => l.id))]);
+
+    // Fetch an overlay layer's features the first time it's toggled on.
+    function toggleOverlay(spec) {
+        const on = !overlayOn[spec.id];
+        setOverlayOn((m) => ({ ...m, [spec.id]: on }));
+        if (on && !overlayData[spec.id]) {
+            layersApi.fetchSource(spec.source)
+                .then((d) => setOverlayData((m) => ({ ...m, [spec.id]: d })))
+                .catch(() => {});
+        }
+    }
 
     // Index spec by layer.id for fast lookup
     const specsById = useMemo(() => {
@@ -177,7 +204,7 @@ export default function DynamicMap({
         });
     }
 
-    if (!layersSpec.length) {
+    if (!layersSpec.length && !overlayLayers.length) {
         return <ErrorState error={{ message: 'No layers configured for this candidate' }} />;
     }
     if (error) return <ErrorState error={error} onRetry={() => window.location.reload()} />;
@@ -244,6 +271,36 @@ export default function DynamicMap({
                     );
                 })}
 
+                {/* Overlay layers — toggleable markers/shapes on top of the drill view */}
+                {overlayLayers.map((spec) => {
+                    if (!overlayOn[spec.id]) return null;
+                    const d = overlayData[spec.id];
+                    if (!d?.features?.length) return null;
+                    return d.features.map((f, idx) => {
+                        const g = f.geometry;
+                        if (g?.type === 'Point') {
+                            const [lng, lat] = g.coordinates;
+                            return (
+                                <Marker key={`${spec.id}-${idx}`} position={[lat, lng]} icon={overlayPin}>
+                                    <Popup>
+                                        <strong className="bn">
+                                            {f.properties[spec.label_from] || f.properties.name || spec.id}
+                                        </strong>
+                                    </Popup>
+                                </Marker>
+                            );
+                        }
+                        // Non-point overlays render as light outlines
+                        return (
+                            <GeoJSON
+                                key={`${spec.id}-${idx}`}
+                                data={f}
+                                style={{ color: '#C62828', weight: 1.5, fillOpacity: 0.1 }}
+                            />
+                        );
+                    });
+                })}
+
                 <FitTo features={deepestData?.features} />
             </MapContainer>
 
@@ -266,6 +323,24 @@ export default function DynamicMap({
                                 {s.label || s.id}
                             </button>
                         </span>
+                    ))}
+                </div>
+            )}
+
+            {/* Overlay toggles (e.g. Show Polling Stations) */}
+            {overlayLayers.length > 0 && (
+                <div className="absolute top-4 right-4 z-[500] bg-white rounded-md shadow-md border border-gray-200 px-3 py-2 space-y-1.5">
+                    {overlayLayers.map((spec) => (
+                        <label key={spec.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                            <input
+                                type="checkbox"
+                                className="accent-brand"
+                                checked={!!overlayOn[spec.id]}
+                                onChange={() => toggleOverlay(spec)}
+                            />
+                            <i className="fas fa-location-dot text-red-600" />
+                            <span>{spec.label || spec.id}</span>
+                        </label>
                     ))}
                 </div>
             )}

@@ -36,7 +36,9 @@ function flt(v) {
 }
 
 async function ingestGeoLayer({
-    candidateId, layerKey, parentLayerKey, rows, mapping, batchSize = 500,
+    candidateId, layerKey, parentLayerKey, rows, mapping,
+    parentFeatureIdFixed = null,   // when set, ALL rows get this parent_feature_id
+    batchSize = 500,
 }) {
     const mappedCols = new Set(Object.values(mapping).filter(Boolean));
     const client = await pool.connect();
@@ -75,7 +77,10 @@ async function ingestGeoLayer({
                     layerKey,
                     featureId || String(start + idx + 1),
                     parentLayerKey || null,
-                    mapping.parent_feature_id ? String(get('parent_feature_id') ?? '') || null : null,
+                    // fixed value wins; else map from a column; else null
+                    parentFeatureIdFixed != null && parentFeatureIdFixed !== ''
+                        ? String(parentFeatureIdFixed)
+                        : (mapping.parent_feature_id ? String(get('parent_feature_id') ?? '') || null : null),
                     mapping.name ? String(get('name') ?? '') || null : null,
                     mapping.code ? String(get('code') ?? '') || null : null,
                     num(get('total_population')),

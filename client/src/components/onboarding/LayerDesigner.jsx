@@ -152,6 +152,10 @@ export default function LayerDesigner({ value, onChange }) {
                                 <input type="checkbox" className="accent-brand" checked={!!l.is_leaf} onChange={(e) => update(i, { is_leaf: e.target.checked })} />
                                 <span className="text-xs text-gray-600">Leaf (deepest level)</span>
                             </label>
+                            <label className="flex items-center gap-2 mt-5">
+                                <input type="checkbox" className="accent-brand" checked={!!l.is_overlay} onChange={(e) => update(i, { is_overlay: e.target.checked })} />
+                                <span className="text-xs text-gray-600">Overlay (toggle, not drill — e.g. polling stations)</span>
+                            </label>
                         </div>
                     </div>
                 );
