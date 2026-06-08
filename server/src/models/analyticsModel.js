@@ -12,7 +12,9 @@ async function overview(candidateId) {
             (SELECT COUNT(*) FROM voters WHERE candidate_id = $1 AND status = 'Follow-up needed')            AS followup_voters,
             (SELECT COUNT(*) FROM canvassing WHERE candidate_id = $1)                                        AS total_canvasses,
             (SELECT COUNT(DISTINCT user_id) FROM canvassing WHERE candidate_id = $1)                         AS active_canvassers,
-            (SELECT COUNT(*) FROM villages WHERE candidate_id = $1)                                          AS total_villages`,
+            (SELECT COUNT(*) FROM villages WHERE candidate_id = $1)                                          AS total_villages,
+            (SELECT COUNT(*) FROM voters WHERE candidate_id = $1 AND gender = 'Male')                        AS male_voters,
+            (SELECT COUNT(*) FROM voters WHERE candidate_id = $1 AND gender = 'Female')                      AS female_voters`,
         [candidateId]
     );
 }

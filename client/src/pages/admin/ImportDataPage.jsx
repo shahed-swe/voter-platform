@@ -96,6 +96,15 @@ function LayerImportRow({ layer, layers, expanded, onToggle, onImported }) {
             guess.latitude = find('lat', 'latitude') || undefined;
             guess.longitude = find('lon', 'lng', 'longitude') || undefined;
             guess.total_population = find('total_vote', 'total_population', 'population') || undefined;
+            // For a child layer, try to auto-pick the Parent link column: a
+            // column whose name matches the parent layer's key or display name
+            // (e.g. a "Ward" column when this layer nests under "ward").
+            if (parentLayer) {
+                guess.parent_feature_id = find(
+                    parentLayer.layer_key,
+                    (parentLayer.display_name || '').toLowerCase()
+                ) || undefined;
+            }
             setMapping(guess);
         } catch (e) {
             setErr(e.response?.data?.error || e.message);
@@ -165,6 +174,18 @@ function LayerImportRow({ layer, layers, expanded, onToggle, onImported }) {
                                 Detected <strong>{preview.format}</strong> · {preview.totalRows.toLocaleString()} rows
                                 {preview.hasGeometry ? ' · geometry ✓' : ' · no geometry'}
                             </div>
+                            {parentLayer && (
+                                <div className={`text-xs rounded p-2 border ${
+                                    mapping.parent_feature_id
+                                        ? 'bg-green-50 border-green-200 text-green-700'
+                                        : 'bg-yellow-50 border-yellow-300 text-yellow-800'
+                                }`}>
+                                    <i className={`fas ${mapping.parent_feature_id ? 'fa-link' : 'fa-triangle-exclamation'} mr-1`} />
+                                    {mapping.parent_feature_id
+                                        ? <>Parent link set: <strong>{mapping.parent_feature_id}</strong> → {parentLayer.display_name}. Drill-down will work.</>
+                                        : <>This layer nests under <strong>{parentLayer.display_name}</strong>. Set <strong>Parent link</strong> below to the column holding the {parentLayer.display_name} id, or clicking {parentLayer.display_name} won't reveal these.</>}
+                                </div>
+                            )}
                             <ColumnMapper
                                 columns={preview.columns}
                                 sample={preview.sample}
