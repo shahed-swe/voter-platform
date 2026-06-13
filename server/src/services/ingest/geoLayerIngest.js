@@ -38,11 +38,13 @@ function flt(v) {
 async function ingestGeoLayer({
     candidateId, layerKey, parentLayerKey, rows, mapping,
     parentFeatureIdFixed = null,   // when set, ALL rows get this parent_feature_id
+    parentMatcher = null,          // fn(childGeom)→parentFeatureId for spatial linking
     batchSize = 500,
 }) {
     const mappedCols = new Set(Object.values(mapping).filter(Boolean));
     const client = await pool.connect();
     let inserted = 0;
+    let matched = 0, unmatched = 0;   // spatial-link tally
     try {
         await client.query('BEGIN');
         // Replace any prior data for this candidate+layer (idempotent re-import)
@@ -72,15 +74,23 @@ async function ingestGeoLayer({
 
                 const geometry = row.__geometry__ ? JSON.stringify(row.__geometry__) : null;
 
+                // Resolve parent_feature_id: spatial match > fixed value > column > null
+                let parentFid;
+                if (parentMatcher) {
+                    parentFid = parentMatcher(row.__geometry__);
+                    if (parentFid) matched++; else unmatched++;
+                } else if (parentFeatureIdFixed != null && parentFeatureIdFixed !== '') {
+                    parentFid = String(parentFeatureIdFixed);
+                } else {
+                    parentFid = mapping.parent_feature_id ? String(get('parent_feature_id') ?? '') || null : null;
+                }
+
                 const tupleVals = [
                     candidateId,
                     layerKey,
                     featureId || String(start + idx + 1),
                     parentLayerKey || null,
-                    // fixed value wins; else map from a column; else null
-                    parentFeatureIdFixed != null && parentFeatureIdFixed !== ''
-                        ? String(parentFeatureIdFixed)
-                        : (mapping.parent_feature_id ? String(get('parent_feature_id') ?? '') || null : null),
+                    parentFid,
                     mapping.name ? String(get('name') ?? '') || null : null,
                     mapping.code ? String(get('code') ?? '') || null : null,
                     num(get('total_population')),
@@ -120,7 +130,7 @@ async function ingestGeoLayer({
         );
 
         await client.query('COMMIT');
-        return { inserted };
+        return { inserted, matched, unmatched };
     } catch (err) {
         await client.query('ROLLBACK');
         throw err;

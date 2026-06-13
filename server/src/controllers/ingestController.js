@@ -6,6 +6,8 @@ const config = require('../config');
 const parsers = require('../services/ingest/parsers');
 const { ingestGeoLayer } = require('../services/ingest/geoLayerIngest');
 const { ingestVoters } = require('../services/ingest/voterIngest');
+const { buildParentMatcher } = require('../services/ingest/spatialJoin');
+const geoLayerModel = require('../models/geoLayerModel');
 const candidateModel = require('../models/candidateModel');
 const layerDefModel = require('../models/layerDefinitionModel');
 const { ForbiddenError, ValidationError, NotFoundError } = require('../utils/errors');
@@ -74,7 +76,7 @@ async function commit(req, res) {
     if (!candidateId) throw new ForbiddenError('Pick a candidate first');
 
     const { upload_token, original_name, layer_key, parent_layer_key, mapping,
-            parent_feature_id_fixed } = req.body || {};
+            parent_feature_id_fixed, parent_link_mode } = req.body || {};
     if (!upload_token || !layer_key || !mapping) {
         throw new ValidationError('upload_token, layer_key and mapping are required');
     }
@@ -88,13 +90,26 @@ async function commit(req, res) {
     const buf = fs.readFileSync(filePath);
     const parsed = await parsers.parseFile(buf, original_name || upload_token);
 
-    const { inserted } = await ingestGeoLayer({
+    // Spatial parent linking: match each child feature to the parent polygon
+    // that contains it (point-in-polygon against the parent layer's features).
+    let parentMatcher = null;
+    if (parent_link_mode === 'spatial') {
+        if (!parent_layer_key) throw new ValidationError('spatial linking needs a parent layer');
+        const parentFc = await geoLayerModel.fetchLayer(candidateId, parent_layer_key);
+        if (!parentFc?.features?.length) {
+            throw new ValidationError(`Parent layer "${parent_layer_key}" has no features yet — import it first`);
+        }
+        parentMatcher = buildParentMatcher(parentFc);
+    }
+
+    const { inserted, matched, unmatched } = await ingestGeoLayer({
         candidateId,
         layerKey: layer_key,
         parentLayerKey: parent_layer_key || null,
         rows: parsed.rows,
         mapping,
         parentFeatureIdFixed: parent_feature_id_fixed || null,
+        parentMatcher,
     });
 
     tryUnlink(filePath); // clean up staged file after successful ingest
@@ -109,7 +124,10 @@ async function commit(req, res) {
         console.warn('[ingest] map_config regenerate skipped:', err.message);
     }
 
-    res.json({ success: true, layer_key, inserted, map_config });
+    res.json({
+        success: true, layer_key, inserted, map_config,
+        ...(parentMatcher ? { spatial: { matched, unmatched } } : {}),
+    });
 }
 
 /**

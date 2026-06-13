@@ -23,7 +23,7 @@ export const uploadPreview = (file) => {
         .then((r) => r.data);
 };
 
-export const commitIngest = ({ uploadToken, originalName, layerKey, parentLayerKey, mapping, parentFeatureIdFixed }) =>
+export const commitIngest = ({ uploadToken, originalName, layerKey, parentLayerKey, mapping, parentFeatureIdFixed, parentLinkMode }) =>
     client
         .post('/ingest/commit', {
             upload_token: uploadToken,
@@ -32,6 +32,7 @@ export const commitIngest = ({ uploadToken, originalName, layerKey, parentLayerK
             parent_layer_key: parentLayerKey || null,
             mapping,
             parent_feature_id_fixed: parentFeatureIdFixed || null,
+            parent_link_mode: parentLinkMode || null,
         })
         .then((r) => r.data);
 

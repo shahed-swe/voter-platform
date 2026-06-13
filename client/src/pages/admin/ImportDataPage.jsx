@@ -140,10 +140,12 @@ function LayerImportRow({ layer, layers, expanded, onToggle, onImported }) {
     const [committing, setCommitting] = useState(false);
     const [err, setErr]           = useState(null);
     const [done, setDone]         = useState(null);
-    // Parent linking: 'column' = map from a column, 'fixed' = all rows share one parent
+    // Parent linking: 'column' = map from a column, 'fixed' = all share one parent,
+    // 'spatial' = match each feature to the parent polygon that contains it
     const [parentMode, setParentMode]   = useState('column');
     const [fixedParent, setFixedParent] = useState('');
     const [parentFeatures, setParentFeatures] = useState([]);
+    const [spatialResult, setSpatialResult] = useState(null);
 
     const parentLayer = layers.find((x) => x.layer_key === layer.parent_layer_key);
 
@@ -201,8 +203,13 @@ function LayerImportRow({ layer, layers, expanded, onToggle, onImported }) {
                 parentLayerKey: layer.parent_layer_key,
                 mapping,
                 parentFeatureIdFixed: parentMode === 'fixed' ? fixedParent : null,
+                parentLinkMode: parentMode === 'spatial' ? 'spatial' : null,
             });
             setDone(res.inserted);
+            if (res.spatial) {
+                setErr(null);
+                setSpatialResult(res.spatial);
+            }
             setPreview(null);
             setFile(null);
             onImported();
@@ -258,7 +265,7 @@ function LayerImportRow({ layer, layers, expanded, onToggle, onImported }) {
                                     <div className="text-sm font-medium text-gray-700">
                                         Link to parent ({parentLayer.display_name})
                                     </div>
-                                    <div className="flex gap-4 text-sm">
+                                    <div className="flex flex-wrap gap-4 text-sm">
                                         <label className="flex items-center gap-1.5">
                                             <input type="radio" className="accent-brand" checked={parentMode === 'column'} onChange={() => setParentMode('column')} />
                                             From a column
@@ -267,15 +274,20 @@ function LayerImportRow({ layer, layers, expanded, onToggle, onImported }) {
                                             <input type="radio" className="accent-brand" checked={parentMode === 'fixed'} onChange={() => setParentMode('fixed')} />
                                             All belong to one {parentLayer.display_name}
                                         </label>
+                                        <label className="flex items-center gap-1.5" title="Match each feature to the parent polygon that geometrically contains it">
+                                            <input type="radio" className="accent-brand" checked={parentMode === 'spatial'} onChange={() => setParentMode('spatial')} />
+                                            Link by location (spatial)
+                                        </label>
                                     </div>
-                                    {parentMode === 'column' ? (
+                                    {parentMode === 'column' && (
                                         <p className="text-xs text-gray-500">
                                             Set <strong>Parent link</strong> in the column map below to the column holding the {parentLayer.display_name} id.
                                             {mapping.parent_feature_id
                                                 ? <span className="text-green-700"> ✓ using "{mapping.parent_feature_id}"</span>
                                                 : <span className="text-yellow-700"> — not set yet</span>}
                                         </p>
-                                    ) : (
+                                    )}
+                                    {parentMode === 'fixed' && (
                                         <select
                                             className="input-field"
                                             value={fixedParent}
@@ -287,6 +299,22 @@ function LayerImportRow({ layer, layers, expanded, onToggle, onImported }) {
                                             ))}
                                         </select>
                                     )}
+                                    {parentMode === 'spatial' && (
+                                        <p className="text-xs text-gray-600">
+                                            <i className="fas fa-location-crosshairs mr-1 text-brand" />
+                                            Each feature will be matched to the {parentLayer.display_name} polygon it sits inside.
+                                            {parentLayer.row_count > 0
+                                                ? <span className="text-green-700"> {parentLayer.display_name} has {parentLayer.row_count.toLocaleString()} features to match against.</span>
+                                                : <span className="text-yellow-700"> ⚠ Import {parentLayer.display_name} first — it has no features yet.</span>}
+                                        </p>
+                                    )}
+                                </div>
+                            )}
+                            {spatialResult && (
+                                <div className="bg-blue-50 border border-blue-200 text-blue-800 text-sm rounded p-2">
+                                    <i className="fas fa-location-crosshairs mr-1" />
+                                    Spatially linked <strong>{spatialResult.matched.toLocaleString()}</strong> features
+                                    {spatialResult.unmatched > 0 && <> · <span className="text-yellow-700">{spatialResult.unmatched.toLocaleString()} fell outside every {parentLayer.display_name} (left unlinked)</span></>}
                                 </div>
                             )}
                             <ColumnMapper
