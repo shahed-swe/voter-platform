@@ -1,11 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
 import L from 'leaflet';
-import { MapContainer, TileLayer, GeoJSON, useMap, LayersControl, Marker, Popup } from 'react-leaflet';
+import { MapContainer, TileLayer, GeoJSON, useMap, LayersControl, Marker, Popup, Tooltip } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 
 import * as layersApi from '../api/layers.js';
 import CanvassedVotersModal from './dashboard/CanvassedVotersModal.jsx';
 import { LoadingState, ErrorState } from './LoadingState.jsx';
+
+// Blue teardrop pin for pinned voter
+const voterPin = L.divIcon({
+    className: '',
+    html: '<div style="background:#4f46e5;width:32px;height:32px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:3px solid white;box-shadow:0 3px 12px rgba(79,70,229,0.55);display:flex;align-items:center;justify-content:center;"><i class="fas fa-user" style="transform:rotate(45deg);color:white;font-size:13px;"></i></div>',
+    iconSize: [32, 32],
+    iconAnchor: [16, 32],
+    popupAnchor: [0, -34],
+});
 
 // Red teardrop pin for overlay point layers (e.g. polling stations)
 const overlayPin = L.divIcon({
@@ -87,8 +96,13 @@ function FitTo({ features }) {
 
 export default function DynamicMap({
     config,
-    candidateId,    // used as cache key so switching candidates clears state
+    candidateId,
     height,
+    controlledDrill,
+    onDrillChange,
+    onLeafClick,         // optional: ({wardLabel, feature}) => void — fired when a 'voters' leaf is clicked
+    pinnedVoter,         // optional: voter object to show as a map pin at the ward centre
+    onPinnedVoterClick,  // optional: () => void — fired when the voter pin is clicked
 }) {
     const allLayers = Array.isArray(config?.layers) ? config.layers : [];
     // Drill layers form the click-to-drill hierarchy; overlay layers are
@@ -98,7 +112,10 @@ export default function DynamicMap({
     const center = config?.center || [23.78, 90.34];
     const zoom   = config?.zoom   || 12;
 
-    const [drillStack, setDrillStack]   = useState([]);
+    const [internalDrillStack, setInternalDrillStack] = useState([]);
+    // Use controlled stack when provided, otherwise internal
+    const drillStack = controlledDrill !== undefined ? controlledDrill : internalDrillStack;
+
     const [dataByLayer, setDataByLayer] = useState({}); // layerId → FeatureCollection
     const [loading, setLoading]         = useState(false);
     const [error, setError]             = useState(null);
@@ -106,9 +123,19 @@ export default function DynamicMap({
     const [overlayOn, setOverlayOn]     = useState({});  // overlayId → bool
     const [overlayData, setOverlayData] = useState({});  // overlayId → FeatureCollection
 
+    // Helper: update drill stack (internal or external)
+    function setDrillStack(val) {
+        const newStack = typeof val === 'function' ? val(drillStack) : val;
+        if (controlledDrill !== undefined) {
+            onDrillChange?.(newStack);
+        } else {
+            setInternalDrillStack(newStack);
+        }
+    }
+
     // Reset stack when candidate changes
     useEffect(() => {
-        setDrillStack([]);
+        setInternalDrillStack([]);
         setDataByLayer({});
         setActiveBuilding(null);
         setOverlayOn({});
@@ -136,28 +163,26 @@ export default function DynamicMap({
     // The currently deepest visible layer
     const deepest = layersSpec[drillStack.length];
 
-    // Fetch root layer (the first one) on mount
+    // Fetch root layer whenever candidate changes (no caching)
     useEffect(() => {
         if (!layersSpec.length) return;
         const root = layersSpec[0];
-        if (dataByLayer[root.id]) return; // already cached
         let cancelled = false;
         setLoading(true);
+        setDataByLayer({});          // clear all stale data first
         layersApi
             .fetchSource(root.source)
-            .then((d) => !cancelled && setDataByLayer((m) => ({ ...m, [root.id]: d })))
+            .then((d) => !cancelled && setDataByLayer({ [root.id]: d }))
             .catch((err) => !cancelled && setError(err))
             .finally(() => !cancelled && setLoading(false));
         return () => { cancelled = true; };
-    }, [layersSpec, candidateId]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [candidateId, JSON.stringify(layersSpec.map((l) => l.id))]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // When drillStack grows, fetch the next layer scoped to the just-clicked parent
+    // Fetch child layer fresh every time the drill selection changes (no caching)
     useEffect(() => {
         if (!deepest) return;
-        const cacheKey = `${deepest.id}|${drillStack.map((s) => s.id).join('>')}`;
-        if (dataByLayer[cacheKey]) return;
         const parentStack = drillStack[drillStack.length - 1];
-        if (!parentStack) return;     // root already fetched above
+        if (!parentStack) return;     // root level — handled above
 
         const parentFk = deepest.parent_fk;
         if (!parentFk) {
@@ -169,11 +194,16 @@ export default function DynamicMap({
         setLoading(true);
         layersApi
             .fetchByParent(deepest.source, parentFk, parentStack.id)
-            .then((d) => !cancelled && setDataByLayer((m) => ({ ...m, [cacheKey]: d })))
+            .then((d) => {
+                if (cancelled) return;
+                // Store result keyed so we can keep parent context layers visible
+                const key = `${deepest.id}|${drillStack.map((s) => s.id).join('>')}`;
+                setDataByLayer((m) => ({ ...m, [key]: d }));
+            })
             .catch((err) => !cancelled && setError(err))
             .finally(() => !cancelled && setLoading(false));
         return () => { cancelled = true; };
-    }, [drillStack, deepest]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [JSON.stringify(drillStack.map((s) => s.id)), candidateId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Resolve data for each visible layer index
     function dataForIndex(idx) {
@@ -184,6 +214,31 @@ export default function DynamicMap({
         return dataByLayer[`${spec.id}|${ancestorIds}`];
     }
 
+    // Compute the best available centre for the voter pin.
+    // Prefers the deepest drilled level (village > ward) so the pin lands inside
+    // the visible building cluster rather than at the ward's bounding-box centre.
+    const pinnedWardCenter = useMemo(() => {
+        if (!pinnedVoter) return null;
+        // Walk from deepest (village, index 2) up to ward (index 1)
+        for (let depth = Math.min(drillStack.length - 1, layersSpec.length - 2); depth >= 1; depth--) {
+            const entry = drillStack[depth];
+            if (!entry) continue;
+            const spec  = layersSpec[depth];
+            if (!spec)  continue;
+            const ancestorIds = drillStack.slice(0, depth).map((s) => s.id).join('>');
+            const data  = dataByLayer[`${spec.id}|${ancestorIds}`];
+            const feat  = data?.features?.find((f) => f.properties.feature_id === entry.id);
+            if (!feat)  continue;
+            try {
+                const bounds = L.geoJSON(feat).getBounds();
+                if (!bounds.isValid()) continue;
+                const c = bounds.getCenter();
+                return [c.lat, c.lng];
+            } catch { /* try shallower level */ }
+        }
+        return null;
+    }, [pinnedVoter?.voter_id, JSON.stringify(drillStack.map((s) => s.id)), dataByLayer]); // eslint-disable-line react-hooks/exhaustive-deps
+
     function onFeatureClick(spec, feature) {
         const action = spec.click || 'drill';
         if (action.startsWith('modal:')) {
@@ -191,6 +246,13 @@ export default function DynamicMap({
             return;
         }
         if (action === 'select') return;
+        if (action === 'voters') {
+            // Leaf layer (building) — fire parent callback with the ward context from drillStack
+            // drillStack = [{constituency}, {ward}, {village}]; ward is index 1
+            const wardLabel = drillStack[1]?.label || null;
+            onLeafClick?.({ wardLabel, feature: feature.properties });
+            return;
+        }
         // Default: drill
         const idx = layersSpec.findIndex((l) => l.id === spec.id);
         const nextLayer = layersSpec[idx + 1];
@@ -301,11 +363,26 @@ export default function DynamicMap({
                     });
                 })}
 
+                {/* Voter pin — shown when a voter has been selected from the list */}
+                {pinnedWardCenter && pinnedVoter && (
+                    <Marker
+                        position={pinnedWardCenter}
+                        icon={voterPin}
+                        eventHandlers={{ click: () => onPinnedVoterClick?.(pinnedVoter) }}
+                    >
+                        <Tooltip direction="top" offset={[0, -34]} opacity={1}>
+                            <span className="text-xs font-semibold">{pinnedVoter.name || pinnedVoter.voter_id}</span>
+                            <span className="block text-[10px] text-gray-500">{pinnedVoter.ward}</span>
+                        </Tooltip>
+                    </Marker>
+                )}
+
                 <FitTo features={deepestData?.features} />
             </MapContainer>
 
-            {/* Breadcrumb of drill state — small floater top-left */}
-            {drillStack.length > 0 && (
+            {/* Breadcrumb of drill state — only when NOT externally controlled
+                (GeoNavigator provides its own navigation in that case) */}
+            {controlledDrill === undefined && drillStack.length > 0 && (
                 <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[500] bg-white rounded-md shadow-md border border-gray-200 px-3 py-1.5 text-sm flex items-center gap-1">
                     <button
                         className="text-brand hover:underline"

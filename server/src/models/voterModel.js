@@ -87,7 +87,7 @@ async function byVoterAreas(candidateId, { areas, status, search, limit = 500, o
                     ) AS has_canvass
                FROM voters v
                ${whereSql}
-               ORDER BY v.name
+               ORDER BY (v.name = '(no name)')::int, v.name
                LIMIT $${i} OFFSET $${i + 1}`,
             [...params, limit, offset]
         ),
@@ -104,6 +104,27 @@ async function byVoterAreas(candidateId, { areas, status, search, limit = 500, o
     ]);
 
     return { voters, stats };
+}
+
+/**
+ * Distinct voter_area_names for a candidate, optionally scoped to a ward.
+ * Used to populate the voter-area picker when the user has drilled to ward level.
+ */
+async function listVoterAreasByScope(candidateId, { ward } = {}) {
+    const where  = ['candidate_id = $1', "voter_area_name IS NOT NULL", "voter_area_name <> ''"];
+    const params = [candidateId];
+    if (ward) {
+        params.push(Array.isArray(ward) ? ward : [ward]);
+        where.push(`ward = ANY($${params.length})`);
+    }
+    return many(
+        `SELECT voter_area_name, COUNT(*)::int AS voter_count
+           FROM voters
+          WHERE ${where.join(' AND ')}
+          GROUP BY voter_area_name
+          ORDER BY voter_count DESC`,
+        params
+    );
 }
 
 async function listVoterAreas(candidateId) {
@@ -240,7 +261,7 @@ async function findByFilters(candidateId, { filters = {}, specs = [], status, se
                     ) AS has_canvass
                FROM voters v
                ${whereSql}
-               ORDER BY v.name
+               ORDER BY (v.name = '(no name)')::int, v.name
                LIMIT $${i} OFFSET $${i + 1}`,
             [...params, limit, offset]
         ),

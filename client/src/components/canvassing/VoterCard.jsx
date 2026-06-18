@@ -47,6 +47,12 @@ export default function VoterCard({ voter, onClick }) {
                     <i className="fas fa-id-card text-gray-400" />
                     <span className="font-mono">ID: {toBn(voter.sos_vid)}</span>
                 </div>
+                {voter.voter_area_name && (
+                    <div className="flex items-center gap-1 truncate">
+                        <i className="fas fa-layer-group text-brand/60 flex-shrink-0" />
+                        <span className="bn truncate text-brand/80">{voter.voter_area_name}</span>
+                    </div>
+                )}
                 {voter.address && (
                     <div className="flex items-start gap-1">
                         <i className="fas fa-house text-green-600 mt-0.5 flex-shrink-0" />

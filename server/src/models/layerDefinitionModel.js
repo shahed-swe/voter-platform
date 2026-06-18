@@ -83,7 +83,7 @@ async function buildMapConfig(client, candidateId) {
             // explicit parent_fk used by table-sources isn't needed; DynamicMap's
             // geo path ignores it. We still record the parent for clarity.
             parent_fk:  r.parent_layer_key ? 'parent_feature_id' : undefined,
-            label_from: 'name',
+            label_from: `${r.layer_key}_name`,
             click:      r.click_action || (r.is_leaf ? 'select' : 'drill'),
             color_by:   r.color_by || 'uniform',
             geometry_type: r.geometry_type || 'polygon',

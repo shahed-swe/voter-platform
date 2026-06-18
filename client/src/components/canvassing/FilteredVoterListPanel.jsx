@@ -21,13 +21,13 @@ function useDebounce(value, ms = 300) {
 
 /**
  * Voter list panel driven by the generic /api/voters/filtered endpoint.
- * Pass the active filter object (same shape as DynamicFilterPanel's value).
  *
- *   filters    — { upazila: [...], union: 'X', mauza: 'Y', village: 'V' }
- *   scopeLabel — display label for the panel header
+ *   filters     — user-facing filter values from DynamicFilterPanel (e.g. {gender: ['Male']})
+ *   scope       — geo-nav scope from GeoNavigator/building click (e.g. {ward: '৫২'})
+ *   scopeLabel  — display label for the panel header
  *   onPickVoter — callback when a voter card is clicked
  */
-export default function FilteredVoterListPanel({ filters, scopeLabel, onPickVoter }) {
+export default function FilteredVoterListPanel({ filters, scope, scopeLabel, onPickVoter }) {
     const [query, setQuery]     = useState('');
     const [status, setStatus]   = useState('');
     const [data, setData]       = useState({ voters: [], stats: { total: 0, visited: 0, not_visited: 0, follow_up: 0 } });
@@ -36,10 +36,10 @@ export default function FilteredVoterListPanel({ filters, scopeLabel, onPickVote
 
     const dQuery = useDebounce(query, 300);
 
-    // Has user picked any filter at all?
-    const hasScope = Object.values(filters || {}).some(
-        (v) => v != null && v !== '' && !(Array.isArray(v) && v.length === 0)
-    );
+    // Has any meaningful scope/filter been applied?
+    const hasScope =
+        Object.values(filters || {}).some((v) => v != null && v !== '' && !(Array.isArray(v) && v.length === 0)) ||
+        Object.values(scope || {}).some((v) => v != null && v !== '');
 
     useEffect(() => {
         if (!hasScope) {
@@ -52,15 +52,25 @@ export default function FilteredVoterListPanel({ filters, scopeLabel, onPickVote
         votersApi
             .filtered({
                 filters,
+                scope,
                 status: status || undefined,
                 search: dQuery || undefined,
                 limit:  500,
             })
-            .then((res) => !cancelled && setData(res))
+            .then((res) => {
+                if (cancelled) return;
+                // Shuffle so the list looks visually distinct on every new scope/filter load
+                const voters = [...(res.voters || [])];
+                for (let i = voters.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [voters[i], voters[j]] = [voters[j], voters[i]];
+                }
+                setData({ ...res, voters });
+            })
             .catch((err) => !cancelled && setError(err))
             .finally(() => !cancelled && setLoading(false));
         return () => { cancelled = true; };
-    }, [JSON.stringify(filters), status, dQuery, hasScope]);
+    }, [JSON.stringify(filters), JSON.stringify(scope), status, dQuery, hasScope]);
 
     const remaining = (data.stats.total || 0) - (data.stats.visited || 0);
 
