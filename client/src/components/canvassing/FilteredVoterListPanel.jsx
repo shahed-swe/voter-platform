@@ -27,7 +27,7 @@ function useDebounce(value, ms = 300) {
  *   scopeLabel  — display label for the panel header
  *   onPickVoter — callback when a voter card is clicked
  */
-export default function FilteredVoterListPanel({ filters, scope, scopeLabel, onPickVoter }) {
+export default function FilteredVoterListPanel({ filters, scope, scopeLabel, onPickVoter, refreshKey = 0 }) {
     const [query, setQuery]     = useState('');
     const [status, setStatus]   = useState('');
     const [data, setData]       = useState({ voters: [], stats: { total: 0, visited: 0, not_visited: 0, follow_up: 0 } });
@@ -70,7 +70,7 @@ export default function FilteredVoterListPanel({ filters, scope, scopeLabel, onP
             .catch((err) => !cancelled && setError(err))
             .finally(() => !cancelled && setLoading(false));
         return () => { cancelled = true; };
-    }, [JSON.stringify(filters), JSON.stringify(scope), status, dQuery, hasScope]);
+    }, [JSON.stringify(filters), JSON.stringify(scope), status, dQuery, hasScope, refreshKey]);
 
     const remaining = (data.stats.total || 0) - (data.stats.visited || 0);
 

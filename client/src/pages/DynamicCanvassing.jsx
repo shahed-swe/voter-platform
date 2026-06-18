@@ -21,6 +21,7 @@ export default function DynamicCanvassing() {
     const [pinnedVoter, setPinnedVoter]     = useState(null);
     const [flash, setFlash]                 = useState(null);
     const [buildingScope, setBuildingScope] = useState(null);
+    const [listRefreshKey, setListRefreshKey] = useState(0);
 
     // Synchronous reset when candidate switches
     const [lastCandidateId, setLastCandidateId] = useState(candidate?.candidate_id);
@@ -49,7 +50,10 @@ export default function DynamicCanvassing() {
 
     function handleLeafClick({ wardLabel }) {
         const s = wardLabelToScope(wardLabel);
-        if (s) setBuildingScope(s);
+        if (s) {
+            setBuildingScope(s);
+            setListRefreshKey((k) => k + 1);
+        }
     }
 
     const scopeLabel = voterArea
@@ -113,6 +117,7 @@ export default function DynamicCanvassing() {
                     filters={filters}
                     scope={geoScope}
                     scopeLabel={scopeLabel}
+                    refreshKey={listRefreshKey}
                     onPickVoter={(v) => setPinnedVoter(v)}
                 />
             </aside>
