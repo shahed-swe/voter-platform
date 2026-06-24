@@ -93,13 +93,30 @@ export default function CanvassFormModal({ voter, onClose, onSubmitted }) {
                 onSubmit={submit}
             >
                 <div className="bg-brand text-white px-6 py-4 flex justify-between items-start rounded-t-xl">
-                    <div>
+                    <div className="flex-1 min-w-0">
                         <h3 className="text-lg font-bold bn">{voter.name}</h3>
                         <p className="text-xs opacity-80 mt-0.5 bn">
                             VID: {toBn(voter.sos_vid)} · {voter.gender} · {voter.age ? `${voter.age} বছর` : '—'}
                         </p>
+                        {voter.father_husband && (
+                            <p className="text-xs opacity-80 bn mt-0.5">পিতা/স্বামী: {voter.father_husband}</p>
+                        )}
+                        {(voter.ward || voter.voter_area_name) && (
+                            <p className="text-xs opacity-75 bn mt-0.5">
+                                <i className="fas fa-layer-group mr-1 opacity-70" />
+                                {voter.ward && `ওয়ার্ড ${voter.ward}`}
+                                {voter.ward && voter.voter_area_name && ' · '}
+                                {voter.voter_area_name}
+                                {voter.voter_area_code && ` (#${voter.voter_area_code})`}
+                            </p>
+                        )}
+                        {voter.address && (
+                            <p className="text-xs opacity-75 bn mt-0.5 break-words">
+                                <i className="fas fa-location-dot mr-1 opacity-70" />{voter.address}
+                            </p>
+                        )}
                     </div>
-                    <button type="button" onClick={onClose} className="text-white/80 hover:text-white">
+                    <button type="button" onClick={onClose} className="text-white/80 hover:text-white ml-3 flex-shrink-0">
                         <i className="fas fa-times" />
                     </button>
                 </div>

@@ -80,7 +80,7 @@ async function byVoterAreas(candidateId, { areas, status, search, limit = 500, o
     const [voters, stats] = await Promise.all([
         many(
             `SELECT v.voter_id, v.sos_vid, v.name, v.father_husband, v.age, v.gender,
-                    v.ward, v.voter_area_name, v.address, v.status,
+                    v.ward, v.voter_area_name, v.voter_area_code, v.address, v.status,
                     EXISTS (
                         SELECT 1 FROM canvassing c
                          WHERE c.voter_id = v.voter_id AND c.candidate_id = $1
@@ -254,7 +254,7 @@ async function findByFilters(candidateId, { filters = {}, specs = [], status, se
     const [voters, stats] = await Promise.all([
         many(
             `SELECT v.voter_id, v.sos_vid, v.name, v.father_husband, v.age, v.gender,
-                    v.ward, v.voter_area_name, v.address, v.status,
+                    v.ward, v.voter_area_name, v.voter_area_code, v.address, v.status,
                     EXISTS (
                         SELECT 1 FROM canvassing c
                          WHERE c.voter_id = v.voter_id AND c.candidate_id = $1

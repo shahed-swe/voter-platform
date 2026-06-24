@@ -37,28 +37,37 @@ export default function VoterCard({ voter, onClick }) {
             <div className="space-y-1 text-xs text-gray-600">
                 <div className="flex items-center gap-3">
                     <span className="flex items-center gap-1">
-                        <i className="fas fa-cake-candles text-gray-400" /> Age: {voter.age ?? '—'}
+                        <i className="fas fa-cake-candles text-gray-400" /> {voter.age ?? '—'} বছর
                     </span>
                     <span className="flex items-center gap-1">
                         <i className={`fas ${g.icon} ${g.cls}`} /> {voter.gender || '—'}
                     </span>
                 </div>
+                {voter.father_husband && (
+                    <div className="flex items-center gap-1 truncate bn">
+                        <i className="fas fa-user text-gray-400 flex-shrink-0" />
+                        <span className="truncate">{voter.father_husband}</span>
+                    </div>
+                )}
                 <div className="flex items-center gap-1 truncate">
                     <i className="fas fa-id-card text-gray-400" />
                     <span className="font-mono">ID: {toBn(voter.sos_vid)}</span>
                 </div>
-                {voter.voter_area_name && (
+                {(voter.ward || voter.voter_area_name) && (
                     <div className="flex items-center gap-1 truncate">
                         <i className="fas fa-layer-group text-brand/60 flex-shrink-0" />
-                        <span className="bn truncate text-brand/80">{voter.voter_area_name}</span>
+                        <span className="bn truncate text-brand/80">
+                            {voter.ward && <span>ওয়ার্ড {voter.ward}</span>}
+                            {voter.ward && voter.voter_area_name && <span className="mx-1 opacity-40">·</span>}
+                            {voter.voter_area_name && <span>{voter.voter_area_name}</span>}
+                            {voter.voter_area_code && <span className="opacity-60 ml-1">(#{toBn(voter.voter_area_code)})</span>}
+                        </span>
                     </div>
                 )}
                 {voter.address && (
                     <div className="flex items-start gap-1">
-                        <i className="fas fa-house text-green-600 mt-0.5 flex-shrink-0" />
-                        <span className="bn break-words">
-                            Address: {voter.address}
-                        </span>
+                        <i className="fas fa-location-dot text-green-600 mt-0.5 flex-shrink-0" />
+                        <span className="bn break-words">{voter.address}</span>
                     </div>
                 )}
             </div>

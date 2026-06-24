@@ -4,7 +4,6 @@ import DynamicFilterPanel from '../components/filters/DynamicFilterPanel.jsx';
 import GeoNavigator from '../components/GeoNavigator.jsx';
 import FilteredVoterListPanel from '../components/canvassing/FilteredVoterListPanel.jsx';
 import CanvassFormModal from '../components/canvassing/CanvassFormModal.jsx';
-import VoterAreaPicker from '../components/VoterAreaPicker.jsx';
 import { useAuth } from '../auth/AuthContext.jsx';
 import { geoStackToScope, wardLabelToScope } from '../utils/geoScope.js';
 
@@ -16,7 +15,6 @@ export default function DynamicCanvassing() {
 
     const [geoNavStack, setGeoNavStack]     = useState([]);
     const [filters, setFilters]             = useState({});
-    const [voterArea, setVoterArea]         = useState('');
     const [activeVoter, setActiveVoter]     = useState(null);
     const [pinnedVoter, setPinnedVoter]     = useState(null);
     const [flash, setFlash]                 = useState(null);
@@ -31,22 +29,18 @@ export default function DynamicCanvassing() {
         setFilters({});
         setBuildingScope(null);
         setPinnedVoter(null);
-        setVoterArea('');
     }
 
-    const wardScope  = buildingScope ?? geoStackToScope(geoNavStack);
-    // Combine ward scope with voter area selection for the finest available granularity
-    const geoScope   = voterArea ? { ...wardScope, voter_area: voterArea } : wardScope;
-    const currentWard = wardScope?.ward ?? null;
+    const geoScope = buildingScope ?? geoStackToScope(geoNavStack);
 
     useEffect(() => {
         setBuildingScope(null);
     }, [geoNavStack]);
 
-    // Clear pin whenever the ward or voter area selection changes
+    // Clear pin whenever navigation changes (ward, voter area, or building)
     useEffect(() => {
         setPinnedVoter(null);
-    }, [currentWard, voterArea]);
+    }, [JSON.stringify(geoNavStack), buildingScope]);
 
     function handleLeafClick({ wardLabel }) {
         const s = wardLabelToScope(wardLabel);
@@ -56,8 +50,8 @@ export default function DynamicCanvassing() {
         }
     }
 
-    const scopeLabel = voterArea
-        || (Object.values(wardScope).some(Boolean) ? geoNavStack[1]?.label || '' : null)
+    const scopeLabel =
+        (Object.values(geoScope).some(Boolean) ? geoNavStack[1]?.label || '' : null)
         || geoNavStack.at(-1)?.label
         || candidate?.title;
 
@@ -96,11 +90,6 @@ export default function DynamicCanvassing() {
                             onSelect={setGeoNavStack}
                         />
                     )}
-                    <VoterAreaPicker
-                        scope={wardScope}
-                        value={voterArea}
-                        onChange={setVoterArea}
-                    />
                     {filterConfig.length > 0 && (
                         <DynamicFilterPanel
                             config={filterConfig}
