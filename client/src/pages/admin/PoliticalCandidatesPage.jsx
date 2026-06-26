@@ -1,0 +1,262 @@
+import { useEffect, useState } from 'react';
+import * as peopleApi from '../../api/people.js';
+import * as candidatesApi from '../../api/candidates.js';
+import { LoadingState, ErrorState, EmptyState, Spinner } from '../../components/LoadingState.jsx';
+import { useAuth } from '../../auth/AuthContext.jsx';
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+function Field({ label, children }) {
+    return (
+        <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
+            {children}
+        </div>
+    );
+}
+
+const INPUT = 'w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand focus:border-brand';
+const BTN_PRIMARY = 'inline-flex items-center gap-2 bg-brand text-white text-sm font-medium px-4 py-2 rounded-md hover:bg-brand/90 disabled:opacity-50';
+const BTN_SECONDARY = 'inline-flex items-center gap-2 border border-gray-300 text-gray-700 text-sm font-medium px-3 py-1.5 rounded-md hover:bg-gray-50';
+
+// ── Create candidate modal ────────────────────────────────────────────────────
+
+function CreateCandidateModal({ constituencies, onClose, onCreated }) {
+    const [form, setForm] = useState({ name: '', username: '', password: '', email: '', phone: '', constituency_id: '' });
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState(null);
+    const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+    async function submit(e) {
+        e.preventDefault();
+        setBusy(true); setError(null);
+        try {
+            const res = await peopleApi.createCandidate({
+                ...form,
+                constituency_id: form.constituency_id || undefined,
+            });
+            onCreated(res);
+        } catch (err) {
+            setError(err.response?.data?.error || err.message);
+        } finally { setBusy(false); }
+    }
+
+    return (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
+                <div className="px-5 py-4 border-b border-gray-100 flex justify-between items-center">
+                    <h3 className="font-semibold text-gray-800">নতুন Candidate তৈরি করুন</h3>
+                    <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><i className="fas fa-times" /></button>
+                </div>
+                <form className="p-5 space-y-3" onSubmit={submit}>
+                    {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded p-2">{error}</div>}
+                    <Field label="পূর্ণ নাম *">
+                        <input className={INPUT} required value={form.name} onChange={set('name')} />
+                    </Field>
+                    <div className="grid grid-cols-2 gap-3">
+                        <Field label="Username *">
+                            <input className={INPUT} required value={form.username} onChange={set('username')} />
+                        </Field>
+                        <Field label="Password *">
+                            <input className={INPUT} required type="password" value={form.password} onChange={set('password')} />
+                        </Field>
+                    </div>
+                    <Field label="Email (optional)">
+                        <input className={INPUT} type="email" value={form.email} onChange={set('email')} />
+                    </Field>
+                    <Field label="Phone (optional)">
+                        <input className={INPUT} value={form.phone} onChange={set('phone')} placeholder="+88017..." />
+                    </Field>
+                    <Field label="Constituency (optional — পরেও assign করা যাবে)">
+                        <select className={INPUT} value={form.constituency_id} onChange={set('constituency_id')}>
+                            <option value="">— এখন assign না করলেও চলবে —</option>
+                            {(constituencies || []).map((c) => (
+                                <option key={c.candidate_id} value={c.candidate_id}>
+                                    {c.name} — {c.constituency}
+                                </option>
+                            ))}
+                        </select>
+                    </Field>
+                    <div className="flex justify-end gap-2 pt-2">
+                        <button type="button" className={BTN_SECONDARY} onClick={onClose}>বাতিল</button>
+                        <button type="submit" className={BTN_PRIMARY} disabled={busy}>
+                            {busy ? <Spinner size="sm" /> : <i className="fas fa-user-plus" />}
+                            তৈরি করুন
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+}
+
+// ── Assign constituency modal ─────────────────────────────────────────────────
+
+function AssignConstituencyModal({ candidate, constituencies, onClose, onSaved }) {
+    const [constituencyId, setConstituencyId] = useState('');
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState(null);
+
+    async function submit(e) {
+        e.preventDefault();
+        if (!constituencyId) return;
+        setBusy(true); setError(null);
+        try {
+            await peopleApi.assignConstituency(candidate.user_id, constituencyId);
+            onSaved();
+        } catch (err) {
+            setError(err.response?.data?.error || err.message);
+        } finally { setBusy(false); }
+    }
+
+    return (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full">
+                <div className="px-5 py-4 border-b border-gray-100 flex justify-between items-center">
+                    <h3 className="font-semibold text-gray-800">{candidate.name} — Constituency Assign</h3>
+                    <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><i className="fas fa-times" /></button>
+                </div>
+                <form className="p-5 space-y-3" onSubmit={submit}>
+                    {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded p-2">{error}</div>}
+                    <select
+                        className={INPUT}
+                        value={constituencyId}
+                        onChange={(e) => setConstituencyId(e.target.value)}
+                        required
+                    >
+                        <option value="">Constituency নির্বাচন করুন</option>
+                        {constituencies.map((c) => (
+                            <option key={c.candidate_id} value={c.candidate_id}>
+                                {c.name} — {c.constituency}
+                            </option>
+                        ))}
+                    </select>
+                    <div className="flex justify-end gap-2 pt-2">
+                        <button type="button" className={BTN_SECONDARY} onClick={onClose}>বাতিল</button>
+                        <button type="submit" className={BTN_PRIMARY} disabled={busy || !constituencyId}>
+                            {busy ? <Spinner size="sm" /> : <i className="fas fa-check" />}
+                            Assign করুন
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
+
+export default function PoliticalCandidatesPage() {
+    const { user } = useAuth();
+    const [candidates, setCandidates]       = useState(null);
+    const [constituencies, setConstituencies] = useState([]);
+    const [error, setError]                 = useState(null);
+    const [showCreate, setShowCreate]       = useState(false);
+    const [assigning, setAssigning]         = useState(null);
+
+    if (!user?.is_super_admin) {
+        return <div className="p-8 text-red-600">Super-admin only.</div>;
+    }
+
+    function reload() {
+        Promise.all([
+            peopleApi.listCandidates(),
+            candidatesApi.list(),
+        ])
+            .then(([cRes, constRes]) => {
+                setCandidates(cRes.candidates || []);
+                setConstituencies(constRes.candidates || constRes || []);
+            })
+            .catch(setError);
+    }
+
+    useEffect(() => { reload(); }, []);
+
+    if (error) return <ErrorState error={error} />;
+    if (!candidates) return <LoadingState />;
+
+    return (
+        <div className="p-6 max-w-4xl mx-auto space-y-6">
+            {/* Header */}
+            <div className="flex items-center justify-between">
+                <div>
+                    <h1 className="text-xl font-bold text-gray-900">Political Candidates</h1>
+                    <p className="text-sm text-gray-500 mt-0.5">
+                        Candidates যারা constituency তে নির্বাচনে অংশ নিচ্ছেন
+                    </p>
+                </div>
+                <button className={BTN_PRIMARY} onClick={() => setShowCreate(true)}>
+                    <i className="fas fa-user-plus" /> নতুন Candidate
+                </button>
+            </div>
+
+            {/* Candidate list */}
+            {candidates.length === 0 ? (
+                <EmptyState icon="fa-user-tie" label="কোনো candidate নেই। উপরে 'নতুন Candidate' বাটনে ক্লিক করুন।" />
+            ) : (
+                <div className="space-y-3">
+                    {candidates.map((c) => (
+                        <CandidateRow
+                            key={c.user_id}
+                            candidate={c}
+                            constituencies={constituencies}
+                            onAssign={() => setAssigning(c)}
+                            onReload={reload}
+                        />
+                    ))}
+                </div>
+            )}
+
+            {/* Modals */}
+            {showCreate && (
+                <CreateCandidateModal
+                    constituencies={constituencies}
+                    onClose={() => setShowCreate(false)}
+                    onCreated={() => { setShowCreate(false); reload(); }}
+                />
+            )}
+            {assigning && (
+                <AssignConstituencyModal
+                    candidate={assigning}
+                    constituencies={constituencies}
+                    onClose={() => setAssigning(null)}
+                    onSaved={() => { setAssigning(null); reload(); }}
+                />
+            )}
+        </div>
+    );
+}
+
+function CandidateRow({ candidate, constituencies, onAssign, onReload }) {
+    const constList = constituencies.filter((c) =>
+        /* We can't easily know which constituencies they have from the users list alone;
+           the backend listCandidates would need to join user_candidates. For now show "—". */
+        false
+    );
+
+    return (
+        <div className="bg-white border border-gray-200 rounded-lg px-4 py-3 flex items-center justify-between gap-4">
+            <div className="min-w-0">
+                <div className="font-medium text-gray-900">{candidate.name}</div>
+                <div className="text-xs text-gray-500 mt-0.5">
+                    @{candidate.username}
+                    {candidate.email && <> · {candidate.email}</>}
+                    {candidate.phone && <> · {candidate.phone}</>}
+                </div>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                    candidate.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                }`}>
+                    {candidate.is_active ? 'Active' : 'Inactive'}
+                </span>
+                <button
+                    className={`${BTN_SECONDARY} text-xs`}
+                    onClick={onAssign}
+                >
+                    <i className="fas fa-map-marker-alt" /> Constituency Assign
+                </button>
+            </div>
+        </div>
+    );
+}

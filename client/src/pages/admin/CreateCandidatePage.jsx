@@ -72,8 +72,8 @@ export default function CreateCandidatePage() {
     return (
         <>
             <PageHeader
-                title="Create a new candidate"
-                subtitle="Define the constituency's geographic hierarchy, then upload its map + voter data."
+                title="Create a new Constituency"
+                subtitle="Define the geographic hierarchy, then upload its map + voter data."
                 actions={<Link to="/admin/candidates" className="btn-secondary"><i className="fas fa-arrow-left" /> Cancel</Link>}
             />
 
@@ -100,8 +100,8 @@ export default function CreateCandidatePage() {
                         <h3 className="card-title">Basics</h3>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                             <div className="md:col-span-2">
-                                <label className="input-label">Candidate name</label>
-                                <input className="input-field" placeholder="e.g. Bobby Hajjaj" value={form.name}
+                                <label className="input-label">Campaign name</label>
+                                <input className="input-field" placeholder="e.g. Dhaka-10 Campaign" value={form.name}
                                     onChange={(e) => { const v = e.target.value; set('name', v); if (!form.subtitle) set('subtitle', `Prepared for ${v}`); }} />
                             </div>
                             <div>
@@ -118,7 +118,7 @@ export default function CreateCandidatePage() {
                                 <input className="input-field" placeholder="e.g. Prepared for …" value={form.subtitle} onChange={(e) => set('subtitle', e.target.value)} />
                             </div>
                             <div className="md:col-span-2">
-                                <label className="input-label">Candidate ID (immutable slug)</label>
+                                <label className="input-label">Constituency ID (immutable slug)</label>
                                 <input className="input-field font-mono text-sm" value={form.candidate_id} onChange={(e) => set('candidate_id', slug(e.target.value))} />
                             </div>
                         </div>
@@ -148,7 +148,7 @@ export default function CreateCandidatePage() {
                     <>
                         <h3 className="card-title">Review</h3>
                         <dl className="text-sm space-y-1.5 mb-4">
-                            <div className="flex justify-between"><dt className="text-gray-500">Candidate ID</dt><dd className="font-mono">{form.candidate_id}</dd></div>
+                            <div className="flex justify-between"><dt className="text-gray-500">Constituency ID</dt><dd className="font-mono">{form.candidate_id}</dd></div>
                             <div className="flex justify-between"><dt className="text-gray-500">Name</dt><dd>{form.name}</dd></div>
                             <div className="flex justify-between"><dt className="text-gray-500">Constituency</dt><dd>{form.constituency}</dd></div>
                             <div className="flex justify-between"><dt className="text-gray-500">Title / subtitle</dt><dd>{form.title} — {form.subtitle}</dd></div>

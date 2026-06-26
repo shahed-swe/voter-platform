@@ -71,11 +71,11 @@ async function stats(candidateId) {
     );
 }
 
-async function submit(candidateId, { voterId, userId, payload }) {
+async function submit(candidateId, { voterId, userId, politicalCandidateId, payload }) {
     return withTransaction(async (client) => {
         const insert = await client.query(
             `INSERT INTO canvassing (
-                candidate_id,
+                candidate_id, political_candidate_id,
                 voter_id, user_id, support_level, contact_phone, contact_email,
                 issues_concerns, household_size, income_bracket,
                 follow_up_needed, follow_up_date,
@@ -83,17 +83,17 @@ async function submit(candidateId, { voterId, userId, payload }) {
                 support_rating, is_undecided, source, voter_member_count, is_minority,
                 floor_number, flat_number, building_name, address, building_id
             ) VALUES (
-                $1,
-                $2, $3, $4, $5, $6,
-                $7, $8, $9,
-                $10, $11,
-                $12, $13, $14,
-                $15, $16, $17, $18, $19,
-                $20, $21, $22, $23, $24
+                $1, $2,
+                $3, $4, $5, $6, $7,
+                $8, $9, $10,
+                $11, $12,
+                $13, $14, $15,
+                $16, $17, $18, $19, $20,
+                $21, $22, $23, $24, $25
             )
             RETURNING *`,
             [
-                candidateId,
+                candidateId, politicalCandidateId || null,
                 voterId, userId, payload.support_level || 'Unknown',
                 payload.contact_phone || null, payload.contact_email || null,
                 payload.issues_concerns || null,
@@ -107,11 +107,16 @@ async function submit(candidateId, { voterId, userId, payload }) {
             ]
         );
 
-        await client.query(
-            `UPDATE voters SET status = 'Visited', updated_at = NOW()
-              WHERE candidate_id = $1 AND voter_id = $2`,
-            [candidateId, voterId]
-        );
+        // Only update shared voters.status when there is no political-candidate
+        // isolation (single-candidate constituency or super-admin context).
+        if (!politicalCandidateId) {
+            const newStatus = payload.follow_up_needed ? 'Follow-up needed' : 'Visited';
+            await client.query(
+                `UPDATE voters SET status = $3, updated_at = NOW()
+                  WHERE candidate_id = $1 AND voter_id = $2`,
+                [candidateId, voterId, newStatus]
+            );
+        }
 
         return insert.rows[0];
     });

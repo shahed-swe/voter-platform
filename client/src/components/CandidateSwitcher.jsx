@@ -58,7 +58,7 @@ export default function CandidateSwitcher() {
         }
     }
 
-    const currentTitle = candidate?.title || 'No candidate';
+    const currentTitle = candidate?.title || 'No constituency';
 
     return (
         <div className="relative" ref={ref}>
@@ -76,7 +76,7 @@ export default function CandidateSwitcher() {
             {open && (
                 <div className="absolute right-0 mt-2 w-72 bg-white rounded-md shadow-xl border border-gray-200 z-[1500] overflow-hidden">
                     <div className="px-4 py-2 text-xs uppercase tracking-wide font-semibold text-gray-500 border-b border-gray-100">
-                        Switch candidate
+                        Switch Constituency
                     </div>
                     {error && (
                         <div className="px-4 py-2 text-xs text-red-600 bg-red-50">{error}</div>
@@ -86,7 +86,7 @@ export default function CandidateSwitcher() {
                             <i className="fas fa-spinner fa-spin mr-2" /> Loading...
                         </div>
                     ) : opts.length === 0 ? (
-                        <div className="px-4 py-3 text-sm text-gray-500">No candidates available.</div>
+                        <div className="px-4 py-3 text-sm text-gray-500">No constituencies available.</div>
                     ) : (
                         <ul className="max-h-80 overflow-y-auto">
                             {opts.map((c) => {

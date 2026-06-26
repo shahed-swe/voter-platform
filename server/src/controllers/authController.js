@@ -11,23 +11,38 @@ const { AuthError, ValidationError, ForbiddenError } = require('../utils/errors'
  *  - regular users: must belong to ≥1 candidate; we auto-activate the first
  *    one when there's exactly one.
  */
-async function buildTokenPayload(user) {
+async function buildTokenPayload(user, { forceCandidate } = {}) {
     const grants = await candidateModel.listForUser(user.user_id);
     const isSuper = !!user.is_super_admin;
 
-    // Default the active candidate to the first one. Users with multiple
-    // can switch via /api/auth/switch-candidate (the header switcher).
-    const activeCandidate = grants[0]?.candidate_id || null;
+    const activeCandidate = forceCandidate || grants[0]?.candidate_id || null;
+    const activeGrant = grants.find((g) => g.candidate_id === activeCandidate) || grants[0] || null;
+
+    // Ward restriction and political_candidate_id apply only to the active grant.
+    // Volunteers see only their allowed wards; political candidates see everything
+    // in their constituency but are scoped by their own user_id.
+    const allowedWards = activeGrant?.allowed_wards || null;
+    const politicalCandidateId = activeGrant?.political_candidate_id
+        // If role is 'candidate', they ARE the political candidate
+        || (activeGrant?.role === 'candidate' ? user.user_id : null)
+        || null;
 
     return {
-        user_id:        user.user_id,
-        username:       user.username,
-        email:          user.email,
-        name:           user.name,
-        role:           user.role,
-        is_super_admin: isSuper,
-        candidates:     grants.map((g) => ({ id: g.candidate_id, role: g.role })),
-        active_candidate: activeCandidate,
+        user_id:               user.user_id,
+        username:              user.username,
+        email:                 user.email,
+        name:                  user.name,
+        role:                  user.role,
+        is_super_admin:        isSuper,
+        candidates:            grants.map((g) => ({
+            id:                    g.candidate_id,
+            role:                  g.role,
+            allowed_wards:         g.allowed_wards || null,
+            political_candidate_id: g.political_candidate_id || null,
+        })),
+        active_candidate:      activeCandidate,
+        allowed_wards:         allowedWards,
+        political_candidate_id: politicalCandidateId,
     };
 }
 
@@ -118,8 +133,7 @@ async function switchCandidate(req, res) {
         if (!role) throw new ForbiddenError('You do not have access to this candidate');
     }
 
-    const payload = await buildTokenPayload(fullUser);
-    payload.active_candidate = candidate_id;
+    const payload = await buildTokenPayload(fullUser, { forceCandidate: candidate_id });
     const token = sign(payload);
 
     res.json({ success: true, token, active_candidate: candidate });

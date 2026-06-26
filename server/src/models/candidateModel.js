@@ -15,10 +15,11 @@ async function listAll() {
     return many(`SELECT ${PUBLIC_FIELDS} FROM candidates ORDER BY name`);
 }
 
-/** Returns the array of {candidate_id, role} the user has access to. */
+/** Returns the array of {candidate_id, role, allowed_wards, political_candidate_id} the user has access to. */
 async function listForUser(userId) {
     return many(
-        `SELECT uc.candidate_id, uc.role, c.name, c.constituency, c.title, c.subtitle
+        `SELECT uc.candidate_id, uc.role, uc.allowed_wards, uc.political_candidate_id,
+                c.name, c.constituency, c.title, c.subtitle
            FROM user_candidates uc
            JOIN candidates c ON c.candidate_id = uc.candidate_id
           WHERE uc.user_id = $1 AND c.status = 'active'
@@ -29,10 +30,11 @@ async function listForUser(userId) {
 
 async function userHasAccess(userId, candidateId) {
     const r = await one(
-        `SELECT role FROM user_candidates WHERE user_id = $1 AND candidate_id = $2`,
+        `SELECT role, allowed_wards, political_candidate_id
+           FROM user_candidates WHERE user_id = $1 AND candidate_id = $2`,
         [userId, candidateId]
     );
-    return r?.role || null;
+    return r || null;
 }
 
 async function create({ candidateId, name, constituency, title, subtitle, logoUrl, theme, filterConfig, mapConfig, createdBy }) {
@@ -52,12 +54,34 @@ async function create({ candidateId, name, constituency, title, subtitle, logoUr
     );
 }
 
-async function grantUserAccess({ userId, candidateId, role, grantedBy }) {
+async function grantUserAccess({ userId, candidateId, role, grantedBy, allowedWards, politicalCandidateId }) {
     await query(
-        `INSERT INTO user_candidates (user_id, candidate_id, role, granted_by)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (user_id, candidate_id) DO UPDATE SET role = EXCLUDED.role`,
-        [userId, candidateId, role, grantedBy || null]
+        `INSERT INTO user_candidates (user_id, candidate_id, role, granted_by, allowed_wards, political_candidate_id)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (user_id, candidate_id) DO UPDATE
+           SET role = EXCLUDED.role,
+               allowed_wards = EXCLUDED.allowed_wards,
+               political_candidate_id = EXCLUDED.political_candidate_id`,
+        [userId, candidateId, role, grantedBy || null, allowedWards || null, politicalCandidateId || null]
+    );
+}
+
+/** List all users (with their role) assigned to a constituency, optionally filtered by political_candidate_id. */
+async function listUsersForConstituency(candidateId, { politicalCandidateId } = {}) {
+    const params = [candidateId];
+    let extra = '';
+    if (politicalCandidateId != null) {
+        params.push(politicalCandidateId);
+        extra = `AND uc.political_candidate_id = $${params.length}`;
+    }
+    return many(
+        `SELECT uc.user_id, uc.role, uc.allowed_wards, uc.political_candidate_id,
+                u.name, u.username, u.email, u.phone, u.is_active
+           FROM user_candidates uc
+           JOIN users u ON u.user_id = uc.user_id
+          WHERE uc.candidate_id = $1 ${extra}
+          ORDER BY uc.role, u.name`,
+        params
     );
 }
 
@@ -103,4 +127,5 @@ module.exports = {
     revokeUserAccess,
     updateFilterConfig,
     remove,
+    listUsersForConstituency,
 };

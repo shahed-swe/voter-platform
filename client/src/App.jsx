@@ -11,6 +11,8 @@ import AdminPage from './pages/AdminPage.jsx';
 import CandidatesListPage from './pages/admin/CandidatesListPage.jsx';
 import CreateCandidatePage from './pages/admin/CreateCandidatePage.jsx';
 import ImportDataPage from './pages/admin/ImportDataPage.jsx';
+import PoliticalCandidatesPage from './pages/admin/PoliticalCandidatesPage.jsx';
+import VolunteerManagementPage from './pages/candidate/VolunteerManagementPage.jsx';
 import NotFoundPage from './pages/NotFoundPage.jsx';
 
 export default function App() {
@@ -60,6 +62,24 @@ export default function App() {
                     element={
                         <ProtectedRoute requireSuperAdmin>
                             <ImportDataPage />
+                        </ProtectedRoute>
+                    }
+                />
+                {/* Political candidates management (super-admin) */}
+                <Route
+                    path="/admin/political-candidates"
+                    element={
+                        <ProtectedRoute requireSuperAdmin>
+                            <PoliticalCandidatesPage />
+                        </ProtectedRoute>
+                    }
+                />
+                {/* Volunteer management (candidate role) */}
+                <Route
+                    path="/volunteers"
+                    element={
+                        <ProtectedRoute roles={['candidate', 'admin']}>
+                            <VolunteerManagementPage />
                         </ProtectedRoute>
                     }
                 />

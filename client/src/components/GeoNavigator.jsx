@@ -1,5 +1,20 @@
 import { useEffect, useState } from 'react';
 import * as layersApi from '../api/layers.js';
+import { wardLabelToScope } from '../utils/geoScope.js';
+
+const BN = '০১২৩৪৫৬৭৮৯';
+function toBn(s) { return String(s).replace(/[0-9]/g, (d) => BN[+d]); }
+
+/**
+ * Returns true if the option label identifies a ward that is in allowedWards.
+ * allowedWards are in Bengali digits (e.g. ['৫২', '৫৩']).
+ * Ward labels look like "Ward No. 52 (88)".
+ */
+function isWardAllowed(label, allowedWards) {
+    const scope = wardLabelToScope(label);
+    if (!scope?.ward) return true; // not a ward label — always show
+    return allowedWards.includes(scope.ward);
+}
 
 /**
  * Cascading geo-layer navigation panel.
@@ -8,12 +23,13 @@ import * as layersApi from '../api/layers.js';
  * When a feature is selected, the map drills into it and zooms.
  *
  * Props:
- *   layers       — map_config.layers (non-overlay)
- *   candidateId  — used to trigger re-fetch on candidate switch
- *   drillStack   — [{id, label}, ...] — current drill state (controlled)
- *   onSelect     — (newDrillStack) => void
+ *   layers        — map_config.layers (non-overlay)
+ *   candidateId   — used to trigger re-fetch on candidate switch
+ *   drillStack    — [{id, label}, ...] — current drill state (controlled)
+ *   onSelect      — (newDrillStack) => void
+ *   allowedWards  — string[] | null — if set, only show these wards (Bengali digits)
  */
-export default function GeoNavigator({ layers, candidateId, drillStack, onSelect }) {
+export default function GeoNavigator({ layers, candidateId, drillStack, onSelect, allowedWards }) {
     const navLayers = (layers || []).filter(
         (l) => !l.overlay
             && l.click !== 'modal:canvassed_voters'
@@ -59,6 +75,18 @@ export default function GeoNavigator({ layers, candidateId, drillStack, onSelect
             onSelect([{ id: options[0].id, label: options[0].label }]);
         }
     }, [opts, drillStack.length, navLayers.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Auto-select when allowedWards restricts to exactly 1 ward and stack hasn't reached ward depth yet.
+    useEffect(() => {
+        if (!allowedWards?.length || navLayers.length < 2) return;
+        const wardLayer = navLayers[1];
+        const allOpts = opts[wardLayer.id];
+        if (!allOpts) return;
+        const filtered = allOpts.filter((o) => isWardAllowed(o.label, allowedWards));
+        if (filtered.length === 1 && drillStack.length === 1) {
+            onSelect([...drillStack.slice(0, 1), { id: filtered[0].id, label: filtered[0].label }]);
+        }
+    }, [opts, allowedWards, drillStack.length, navLayers.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Load each child layer fresh whenever the parent selection changes
     useEffect(() => {
@@ -128,7 +156,11 @@ export default function GeoNavigator({ layers, candidateId, drillStack, onSelect
 
             <div className="p-3 space-y-3">
                 {navLayers.map((layer, i) => {
-                    const options  = opts[layer.id] || [];
+                    const rawOptions = opts[layer.id] || [];
+                    // For volunteer ward restriction: filter ward options to only allowed ones
+                    const options = (allowedWards?.length && i === 1)
+                        ? rawOptions.filter((o) => isWardAllowed(o.label, allowedWards))
+                        : rawOptions;
                     const isLoading = !!loading[layer.id];
                     const disabled  = i > 0 && drillStack.length < i;
                     const selectedId = drillStack[i]?.id || '';
@@ -137,6 +169,12 @@ export default function GeoNavigator({ layers, candidateId, drillStack, onSelect
                     const rootAutoSelected =
                         i === 0 && options.length === 1 && drillStack[0]?.id === options[0]?.id;
                     if (rootAutoSelected) return null;
+
+                    // Hide ward dropdown if volunteer has exactly 1 ward (auto-selected above)
+                    const wardAutoSelected =
+                        allowedWards?.length && i === 1 && options.length === 1
+                        && drillStack[1]?.id === options[0]?.id;
+                    if (wardAutoSelected) return null;
 
                     return (
                         <div key={layer.id}>

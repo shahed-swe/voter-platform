@@ -8,7 +8,8 @@ import { useAuth } from '../auth/AuthContext.jsx';
 import { geoStackToScope, wardLabelToScope } from '../utils/geoScope.js';
 
 export default function DynamicCanvassing() {
-    const { candidate } = useAuth();
+    const { candidate, user } = useAuth();
+    const allowedWards = user?.allowed_wards || null;
     const cfg          = candidate?.map_config || {};
     const filterConfig = candidate?.filter_config || [];
     const mapLayers    = (cfg.layers || []).filter((l) => !l.overlay);
@@ -88,6 +89,7 @@ export default function DynamicCanvassing() {
                             candidateId={candidate?.candidate_id}
                             drillStack={geoNavStack}
                             onSelect={setGeoNavStack}
+                            allowedWards={allowedWards}
                         />
                     )}
                     {filterConfig.length > 0 && (

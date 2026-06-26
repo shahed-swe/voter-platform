@@ -13,6 +13,7 @@ async function submit(req, res) {
     const canvass = await canvassingModel.submit(tenant(req), {
         voterId: voter_id,
         userId: req.user.user_id,
+        politicalCandidateId: req.user.political_candidate_id || null,
         payload: rest,
     });
     res.status(201).json({ success: true, canvass });

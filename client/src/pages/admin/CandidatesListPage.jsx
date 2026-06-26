@@ -38,17 +38,17 @@ export default function CandidatesListPage() {
     return (
         <>
             <PageHeader
-                title="Candidates"
-                subtitle="Each row is a separate campaign with its own data, branding and filter hierarchy."
+                title="Constituencies"
+                subtitle="Each row is a separate electoral area with its own voter data, map and filters."
                 actions={
                     <Link to="/admin/candidates/new" className="btn-primary">
-                        <i className="fas fa-plus" /> New candidate
+                        <i className="fas fa-plus" /> New Constituency
                     </Link>
                 }
             />
 
             {list.length === 0 ? (
-                <EmptyState icon="fa-user-tie" label="No candidates yet" />
+                <EmptyState icon="fa-map-location-dot" label="No constituencies yet" />
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {list.map((c) => (
@@ -99,7 +99,7 @@ export default function CandidatesListPage() {
                                 </button>
                                 <button
                                     className="btn-danger text-sm px-3"
-                                    title="Delete candidate"
+                                    title="Delete constituency"
                                     onClick={() => setDelTarget(c)}
                                 >
                                     <i className="fas fa-trash" />
@@ -143,7 +143,7 @@ function DeleteDialog({ candidate, isActive, onClose, onDeleted }) {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[2000]">
             <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
                 <div className="px-5 py-3 border-b border-gray-200 flex items-center justify-between">
-                    <h3 className="font-semibold text-red-700"><i className="fas fa-triangle-exclamation mr-2" />Delete candidate</h3>
+                    <h3 className="font-semibold text-red-700"><i className="fas fa-triangle-exclamation mr-2" />Delete constituency</h3>
                     <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><i className="fas fa-times" /></button>
                 </div>
                 <div className="p-5 space-y-3 text-sm">

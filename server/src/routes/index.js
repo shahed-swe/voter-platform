@@ -10,6 +10,9 @@ router.use('/auth', require('./authRoutes'));
 // They require auth but not an active candidate context.
 router.use('/candidates', verifyToken, require('./candidateRoutes'));
 
+// People management: political candidates + volunteers (cross-candidate, no scope needed).
+router.use('/people', require('./peopleRoutes'));
+
 // Everything else requires authentication AND a candidate scope (set on req.candidateId).
 router.use(verifyToken, scopeToCandidate);
 

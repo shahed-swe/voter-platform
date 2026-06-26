@@ -94,6 +94,18 @@ async function filtered(req, res) {
         if (SCOPE_SAFE.has(k) && v != null && v !== '') safeScope[k] = v;
     }
 
+    // Enforce ward restriction for volunteers: allowed_wards in JWT limits what ward can be requested.
+    const allowedWards = req.user?.allowed_wards;
+    if (allowedWards?.length) {
+        if (safeScope.ward && !allowedWards.includes(safeScope.ward)) {
+            throw new ForbiddenError('Ward not in your allowed wards');
+        }
+        // If no ward scoped yet, force to first allowed ward so they can't see all wards.
+        if (!safeScope.ward) {
+            safeScope.ward = allowedWards[0];
+        }
+    }
+
     // Merge: scope is broader context, filters are user refinements
     const merged = { ...safeScope, ...filters };
 
@@ -104,6 +116,7 @@ async function filtered(req, res) {
         search,
         limit: limit ? Math.min(parseInt(limit, 10) || 500, 2000) : 500,
         offset: offset ? parseInt(offset, 10) : 0,
+        politicalCandidateId: req.user?.political_candidate_id || null,
     });
     res.json({ success: true, ...result });
 }

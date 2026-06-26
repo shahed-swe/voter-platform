@@ -111,11 +111,33 @@ async function remove(userId) {
     return rowCount > 0;
 }
 
+async function listByRole(role) {
+    return many(
+        `SELECT ${PUBLIC_FIELDS} FROM users WHERE role = $1 AND is_active = true ORDER BY name`,
+        [role]
+    );
+}
+
+/** Find users by partial username/name match — for "select existing volunteer" UI. */
+async function searchAll({ search, limit = 20 } = {}) {
+    const params = [`%${search || ''}%`];
+    return many(
+        `SELECT ${PUBLIC_FIELDS} FROM users
+          WHERE (name ILIKE $1 OR username ILIKE $1)
+            AND is_active = true
+          ORDER BY name
+          LIMIT $2`,
+        [params[0], limit]
+    );
+}
+
 module.exports = {
     findById,
     findByUsername,
     findByUsernameOrEmail,
     list,
+    listByRole,
+    searchAll,
     create,
     update,
     updatePassword,

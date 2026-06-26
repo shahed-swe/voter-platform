@@ -2,11 +2,13 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext.jsx';
 
 const ITEMS = [
-    { to: '/dashboard',        label: 'Dashboard'        },
-    { to: '/canvassing',       label: 'Canvassing'       },
-    { to: '/analytics',        label: 'Analytics'        },
-    { to: '/election-results', label: 'Election Results' },
-    { to: '/admin',            label: 'Admin', roles: ['admin', 'sub_admin'] },
+    { to: '/dashboard',                    label: 'Dashboard'           },
+    { to: '/canvassing',                   label: 'Canvassing'          },
+    { to: '/analytics',                    label: 'Analytics'           },
+    { to: '/election-results',             label: 'Election Results'    },
+    { to: '/admin',                        label: 'Admin',          roles: ['admin', 'sub_admin'] },
+    { to: '/admin/political-candidates',   label: 'Candidates',     superAdmin: true },
+    { to: '/volunteers',                   label: 'Volunteers',     roles: ['candidate'] },
 ];
 
 export default function Navbar() {
@@ -24,7 +26,11 @@ export default function Navbar() {
             </div>
 
             <nav className="ml-6 flex items-center gap-1 flex-1 overflow-x-auto">
-                {ITEMS.filter((i) => !i.roles || i.roles.includes(user?.role)).map((i) => (
+                {ITEMS.filter((i) => {
+                    if (i.superAdmin) return !!user?.is_super_admin;
+                    if (i.roles) return i.roles.includes(user?.role) || !!user?.is_super_admin;
+                    return true;
+                }).map((i) => (
                     <NavLink
                         key={i.to}
                         to={i.to}

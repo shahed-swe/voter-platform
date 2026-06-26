@@ -9,7 +9,8 @@ import { useAuth } from '../auth/AuthContext.jsx';
 import { geoStackToScope, wardLabelToScope } from '../utils/geoScope.js';
 
 export default function DynamicDashboard() {
-    const { candidate } = useAuth();
+    const { candidate, user } = useAuth();
+    const allowedWards = user?.allowed_wards || null;
     const cfg          = candidate?.map_config || {};
     const filterConfig = candidate?.filter_config || [];
     const mapLayers    = (cfg.layers || []).filter((l) => !l.overlay);
@@ -42,13 +43,19 @@ export default function DynamicDashboard() {
     }, [JSON.stringify(geoNavStack)]);
 
     useEffect(() => {
+        const hasFilters = Object.values(filters).some(
+            (v) => v != null && v !== '' && !(Array.isArray(v) && v.length === 0)
+        );
+        const hasWard = Object.values(wardScope).some((v) => v != null && v !== '');
+        if (!hasFilters && !hasWard) { setStats(null); return; }
+
         let cancelled = false;
         votersApi
-            .filtered({ filters, limit: 1 })
+            .filtered({ filters, scope: wardScope, limit: 1 })
             .then((d) => !cancelled && setStats(d.stats || null))
             .catch(() => !cancelled && setStats(null));
         return () => { cancelled = true; };
-    }, [JSON.stringify(filters), candidate?.candidate_id]);
+    }, [JSON.stringify(filters), JSON.stringify(wardScope), candidate?.candidate_id]);
 
     function handleLeafClick({ wardLabel }) {
         const scope = wardLabelToScope(wardLabel);
@@ -95,6 +102,7 @@ export default function DynamicDashboard() {
                             candidateId={candidate?.candidate_id}
                             drillStack={geoNavStack}
                             onSelect={setGeoNavStack}
+                            allowedWards={allowedWards}
                         />
                     )}
                     {filterConfig.length > 0 && (
