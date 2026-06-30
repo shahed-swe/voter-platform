@@ -17,15 +17,15 @@ FROM base AS runtime
 ENV NODE_ENV=production
 ENV PORT=3000
 
-# Non-root user
-RUN addgroup -S app && adduser -S app -G app
+# Non-root user — create dirs as root first, then hand ownership over
+RUN addgroup -S app && adduser -S app -G app \
+    && mkdir -p uploads/photos uploads/audio \
+    && chown -R app:app /app
+
 USER app
 
 COPY --chown=app:app --from=deps /app/node_modules ./node_modules
 COPY --chown=app:app . .
-
-# uploads/ will be a bind mount or named volume in compose
-RUN mkdir -p uploads/photos uploads/audio
 
 EXPOSE 3000
 

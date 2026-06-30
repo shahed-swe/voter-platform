@@ -23,7 +23,7 @@ async function appliedMigrations() {
 function listMigrationFiles() {
     return fs
         .readdirSync(MIGRATIONS_DIR)
-        .filter((f) => f.endsWith('.sql'))
+        .filter((f) => !f.startsWith('.') && f.endsWith('.sql'))
         .sort();
 }
 
