@@ -14,7 +14,7 @@ const config = {
 
     tenant: {
         id: process.env.TENANT_ID || 'default',
-        name: process.env.TENANT_NAME || 'Voter Survey Platform',
+        name: process.env.TENANT_NAME || 'Voter Management Platform',
         publicUrl: process.env.TENANT_PUBLIC_URL || '',
     },
 

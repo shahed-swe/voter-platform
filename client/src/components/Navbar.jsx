@@ -21,7 +21,7 @@ export default function Navbar() {
                 <img src="/assets/images/BSARL.png" alt="BSAR" className="h-9 w-9 object-contain" />
                 <img src="/assets/images/centristnation.png" alt="Centristnation" className="h-9 w-9 object-contain" />
                 <span className="ml-2 font-semibold text-gray-800 hidden sm:inline">
-                    Voter Survey Platform
+                    Voter Management Platform
                 </span>
             </div>
 

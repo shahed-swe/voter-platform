@@ -50,7 +50,7 @@ export default function LoginPage() {
                         <img src="/assets/images/BSARL.png" alt="BSAR" className="h-12 w-12 object-contain" />
                         <img src="/assets/images/centristnation.png" alt="Centristnation" className="h-12 w-12 object-contain" />
                     </div>
-                    <h1 className="text-2xl font-semibold">Voter Survey Platform</h1>
+                    <h1 className="text-2xl font-semibold">Voter Management Platform</h1>
                     <p className="text-sm opacity-80 mt-1">Sign in to your account</p>
                 </div>
 
