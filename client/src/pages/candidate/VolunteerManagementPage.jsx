@@ -1,7 +1,21 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import * as peopleApi from '../../api/people.js';
+import * as layersApi from '../../api/layers.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
+import { wardLabelToScope } from '../../utils/geoScope.js';
 import { LoadingState, ErrorState, EmptyState, Spinner } from '../../components/LoadingState.jsx';
+
+/**
+ * Resolve the ward layer (source + label field) for the active constituency
+ * from its map_config. Nav layers go constituency → ward → village → building;
+ * the ward layer is index 1 of the non-overlay, non-leaf layers.
+ */
+function wardLayerOf(candidate) {
+    const navLayers = (candidate?.map_config?.layers || []).filter(
+        (l) => !l.overlay && l.click !== 'voters'
+    );
+    return navLayers.find((l) => l.id === 'ward') || navLayers[1] || null;
+}
 
 const INPUT = 'w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand focus:border-brand';
 const BTN_PRIMARY = 'inline-flex items-center gap-2 bg-brand text-white text-sm font-medium px-4 py-2 rounded-md hover:bg-brand/90 disabled:opacity-50';
@@ -12,40 +26,78 @@ const toBn = (s) => String(s ?? '').replace(/[0-9]/g, (d) => BN[+d]);
 
 // ── Ward picker ───────────────────────────────────────────────────────────────
 
-function WardInput({ value, onChange, label }) {
-    const [input, setInput] = useState('');
+/**
+ * Multi-select dropdown of the constituency's actual wards.
+ *   wardOptions — [{ value: '৫২', label: 'Ward No. 52 (88)' }] from the ward layer
+ *   value       — selected ward values (Bengali digits, e.g. ['৫২'])
+ *   loading     — ward options still being fetched
+ */
+function WardSelect({ value, onChange, label, wardOptions, loading }) {
+    const [open, setOpen] = useState(false);
+    const ref = useRef(null);
 
-    function add() {
-        const w = input.trim();
-        if (!w || value.includes(w)) return;
-        onChange([...value, w]);
-        setInput('');
-    }
+    useEffect(() => {
+        function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+        document.addEventListener('mousedown', onDoc);
+        return () => document.removeEventListener('mousedown', onDoc);
+    }, []);
 
-    function remove(w) {
-        onChange(value.filter((x) => x !== w));
+    function toggle(w) {
+        onChange(value.includes(w) ? value.filter((x) => x !== w) : [...value, w]);
     }
+    const remove = (w) => onChange(value.filter((x) => x !== w));
+
+    const labelFor = (w) => wardOptions.find((o) => o.value === w)?.label || `ওয়ার্ড ${w}`;
 
     return (
         <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
-            <div className="flex gap-2 mb-2">
-                <input
-                    className={INPUT + ' flex-1'}
-                    placeholder="Ward number (বাংলায়, e.g. ৫২)"
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }}
-                />
-                <button type="button" className={BTN_SECONDARY} onClick={add}>
-                    <i className="fas fa-plus" /> Add
+            <div className="relative" ref={ref}>
+                <button
+                    type="button"
+                    className={INPUT + ' flex items-center justify-between text-left'}
+                    onClick={() => setOpen((o) => !o)}
+                    disabled={loading}
+                >
+                    <span className={value.length ? 'text-gray-800' : 'text-gray-400'}>
+                        {loading
+                            ? 'Ward লোড হচ্ছে...'
+                            : value.length
+                                ? `${toBn(value.length)} টি ward নির্বাচিত`
+                                : 'Ward নির্বাচন করুন'}
+                    </span>
+                    <i className={`fas fa-chevron-${open ? 'up' : 'down'} text-xs text-gray-400`} />
                 </button>
+
+                {open && !loading && (
+                    <div className="absolute z-30 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-56 overflow-y-auto">
+                        {wardOptions.length === 0 ? (
+                            <div className="px-3 py-2 text-xs text-gray-400">এই constituency-তে কোনো ward পাওয়া যায়নি।</div>
+                        ) : (
+                            wardOptions.map((o) => {
+                                const checked = value.includes(o.value);
+                                return (
+                                    <button
+                                        key={o.value}
+                                        type="button"
+                                        className="w-full text-left px-3 py-2 hover:bg-brand/5 flex items-center gap-2 text-sm"
+                                        onClick={() => toggle(o.value)}
+                                    >
+                                        <i className={`fas ${checked ? 'fa-check-square text-brand' : 'fa-square text-gray-300'}`} />
+                                        <span className="bn">{o.label}</span>
+                                    </button>
+                                );
+                            })
+                        )}
+                    </div>
+                )}
             </div>
+
             {value.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
+                <div className="flex flex-wrap gap-1.5 mt-2">
                     {value.map((w) => (
                         <span key={w} className="flex items-center gap-1 bg-brand/10 text-brand text-xs px-2 py-1 rounded-full bn">
-                            ওয়ার্ড {w}
+                            {labelFor(w)}
                             <button type="button" onClick={() => remove(w)} className="ml-0.5 hover:text-red-500">
                                 <i className="fas fa-times text-[10px]" />
                             </button>
@@ -107,7 +159,7 @@ function UserSearchPicker({ onPick }) {
 
 // ── Add volunteer modal ───────────────────────────────────────────────────────
 
-function AddVolunteerModal({ constituencyId, onClose, onAdded }) {
+function AddVolunteerModal({ constituencyId, onClose, onAdded, wardOptions, wardsLoading }) {
     const [mode, setMode] = useState('new'); // 'new' | 'existing'
     const [pickedUser, setPickedUser] = useState(null);
     const [form, setForm] = useState({ name: '', username: '', password: '', email: '', phone: '' });
@@ -203,10 +255,12 @@ function AddVolunteerModal({ constituencyId, onClose, onAdded }) {
                     )}
 
                     {/* Ward picker */}
-                    <WardInput
+                    <WardSelect
                         label="Ward assign করুন (কমপক্ষে একটি) *"
                         value={wards}
                         onChange={setWards}
+                        wardOptions={wardOptions}
+                        loading={wardsLoading}
                     />
 
                     <div className="flex justify-end gap-2 pt-2">
@@ -228,7 +282,7 @@ function AddVolunteerModal({ constituencyId, onClose, onAdded }) {
 
 // ── Edit wards modal ──────────────────────────────────────────────────────────
 
-function EditWardsModal({ volunteer, constituencyId, onClose, onSaved }) {
+function EditWardsModal({ volunteer, constituencyId, onClose, onSaved, wardOptions, wardsLoading }) {
     const [wards, setWards] = useState(volunteer.allowed_wards || []);
     const [busy, setBusy]   = useState(false);
     const [error, setError] = useState(null);
@@ -254,7 +308,7 @@ function EditWardsModal({ volunteer, constituencyId, onClose, onSaved }) {
                 </div>
                 <form className="p-5 space-y-4" onSubmit={submit}>
                     {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded p-2">{error}</div>}
-                    <WardInput label="Assigned Wards" value={wards} onChange={setWards} />
+                    <WardSelect label="Assigned Wards" value={wards} onChange={setWards} wardOptions={wardOptions} loading={wardsLoading} />
                     <div className="flex justify-end gap-2">
                         <button type="button" className={BTN_SECONDARY} onClick={onClose}>বাতিল</button>
                         <button type="submit" className={BTN_PRIMARY} disabled={busy || !wards.length}>
@@ -276,6 +330,9 @@ export default function VolunteerManagementPage() {
     const [showAdd, setShowAdd]       = useState(false);
     const [editing, setEditing]       = useState(null);
 
+    const [wardOptions, setWardOptions]   = useState([]);
+    const [wardsLoading, setWardsLoading] = useState(false);
+
     const constituencyId = candidate?.candidate_id;
 
     const allowed = user?.is_super_admin || user?.role === 'candidate';
@@ -290,6 +347,31 @@ export default function VolunteerManagementPage() {
     }, [constituencyId]);
 
     useEffect(() => { reload(); }, [reload]);
+
+    // Load the constituency's wards for the assignment dropdown.
+    useEffect(() => {
+        const wardLayer = wardLayerOf(candidate);
+        if (!wardLayer) { setWardOptions([]); return; }
+        let cancelled = false;
+        setWardsLoading(true);
+        layersApi.fetchSource(wardLayer.source)
+            .then((fc) => {
+                if (cancelled) return;
+                const seen = new Set();
+                const opts = (fc.features || [])
+                    .map((f) => {
+                        const lbl = String(f.properties?.[wardLayer.label_from || 'name'] ?? '');
+                        const ward = wardLabelToScope(lbl)?.ward;
+                        return ward ? { value: ward, label: lbl } : null;
+                    })
+                    .filter((o) => o && !seen.has(o.value) && seen.add(o.value))
+                    .sort((a, b) => a.label.localeCompare(b.label, 'bn', { numeric: true }));
+                setWardOptions(opts);
+            })
+            .catch(() => { if (!cancelled) setWardOptions([]); })
+            .finally(() => { if (!cancelled) setWardsLoading(false); });
+        return () => { cancelled = true; };
+    }, [constituencyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     async function handleRemove(v) {
         if (!confirm(`${v.name} কে remove করবেন?`)) return;
@@ -362,6 +444,8 @@ export default function VolunteerManagementPage() {
                     constituencyId={constituencyId}
                     onClose={() => setShowAdd(false)}
                     onAdded={() => { setShowAdd(false); reload(); }}
+                    wardOptions={wardOptions}
+                    wardsLoading={wardsLoading}
                 />
             )}
             {editing && (
@@ -370,6 +454,8 @@ export default function VolunteerManagementPage() {
                     constituencyId={constituencyId}
                     onClose={() => setEditing(null)}
                     onSaved={() => { setEditing(null); reload(); }}
+                    wardOptions={wardOptions}
+                    wardsLoading={wardsLoading}
                 />
             )}
         </div>
