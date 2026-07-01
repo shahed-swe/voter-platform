@@ -3,10 +3,23 @@ import L from 'leaflet';
 import { MapContainer, TileLayer, GeoJSON, useMap, LayersControl, Marker, Popup, Tooltip } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 
+import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
+import markerIcon from 'leaflet/dist/images/marker-icon.png';
+import markerShadow from 'leaflet/dist/images/marker-shadow.png';
+
 import * as layersApi from '../api/layers.js';
 import CanvassedVotersModal from './dashboard/CanvassedVotersModal.jsx';
 import { LoadingState, ErrorState } from './LoadingState.jsx';
 import { wardLabelToScope } from '../utils/geoScope.js';
+
+// Leaflet's default marker icon resolves its PNGs via a computed path that 404s
+// under a bundler. Point them at the bundled assets so any default marker (e.g.
+// a stray Point feature) renders instead of showing a broken image.
+L.Icon.Default.mergeOptions({
+    iconRetinaUrl: markerIcon2x,
+    iconUrl: markerIcon,
+    shadowUrl: markerShadow,
+});
 
 // Blue teardrop pin for pinned voter
 const voterPin = L.divIcon({
@@ -328,6 +341,18 @@ export default function DynamicMap({
                         <GeoJSON
                             key={`${spec.id}-${i === 0 ? 'root' : drillStack[i - 1]?.id}-${data.features.length}`}
                             data={data}
+                            // Some layers mix polygons with Point features (e.g. a
+                            // handful of point-only buildings). Render points as styled
+                            // circle markers — otherwise react-leaflet falls back to the
+                            // default Leaflet icon, whose PNGs 404 under the bundler and
+                            // show as broken images.
+                            pointToLayer={(f, latlng) => {
+                                const s = styleFor(spec, f);
+                                const st = isDeepest
+                                    ? s
+                                    : { ...s, fillOpacity: (s.fillOpacity ?? 0.55) * 0.4, weight: (s.weight ?? 1) * 0.7 };
+                                return L.circleMarker(latlng, { radius: 6, ...st });
+                            }}
                             style={(f) => {
                                 const s = styleFor(spec, f);
                                 return isDeepest
