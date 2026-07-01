@@ -93,6 +93,24 @@ async function revokeUserAccess(userId, candidateId) {
     return rowCount > 0;
 }
 
+/**
+ * Remove all 'candidate'-role grants for a user except (optionally) one to keep.
+ * Used when re-assigning a political candidate to a single constituency so they
+ * never accumulate stale assignments.
+ */
+async function revokeCandidateGrants(userId, exceptCandidateId = null) {
+    const params = [userId];
+    let extra = '';
+    if (exceptCandidateId != null) {
+        params.push(exceptCandidateId);
+        extra = `AND candidate_id <> $${params.length}`;
+    }
+    await query(
+        `DELETE FROM user_candidates WHERE user_id = $1 AND role = 'candidate' ${extra}`,
+        params
+    );
+}
+
 async function updateFilterConfig(candidateId, filterConfig) {
     return one(
         `UPDATE candidates SET filter_config = $2::jsonb, updated_at = NOW()
@@ -125,6 +143,7 @@ module.exports = {
     create,
     grantUserAccess,
     revokeUserAccess,
+    revokeCandidateGrants,
     updateFilterConfig,
     remove,
     listUsersForConstituency,

@@ -93,7 +93,7 @@ function CreateCandidateModal({ constituencies, onClose, onCreated }) {
 // ── Assign constituency modal ─────────────────────────────────────────────────
 
 function AssignConstituencyModal({ candidate, constituencies, onClose, onSaved }) {
-    const [constituencyId, setConstituencyId] = useState('');
+    const [constituencyId, setConstituencyId] = useState(candidate.constituency_id || '');
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(null);
 
@@ -118,6 +118,11 @@ function AssignConstituencyModal({ candidate, constituencies, onClose, onSaved }
                 </div>
                 <form className="p-5 space-y-3" onSubmit={submit}>
                     {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded p-2">{error}</div>}
+                    {candidate.constituency_id && (
+                        <div className="text-xs text-gray-500">
+                            বর্তমান: <span className="font-medium text-gray-700">{candidate.constituency_name || candidate.constituency_id}</span>
+                        </div>
+                    )}
                     <select
                         className={INPUT}
                         value={constituencyId}
@@ -199,9 +204,7 @@ export default function PoliticalCandidatesPage() {
                         <CandidateRow
                             key={c.user_id}
                             candidate={c}
-                            constituencies={constituencies}
                             onAssign={() => setAssigning(c)}
-                            onReload={reload}
                         />
                     ))}
                 </div>
@@ -227,12 +230,8 @@ export default function PoliticalCandidatesPage() {
     );
 }
 
-function CandidateRow({ candidate, constituencies, onAssign, onReload }) {
-    const constList = constituencies.filter((c) =>
-        /* We can't easily know which constituencies they have from the users list alone;
-           the backend listCandidates would need to join user_candidates. For now show "—". */
-        false
-    );
+function CandidateRow({ candidate, onAssign }) {
+    const assigned = candidate.constituency_id;
 
     return (
         <div className="bg-white border border-gray-200 rounded-lg px-4 py-3 flex items-center justify-between gap-4">
@@ -242,6 +241,20 @@ function CandidateRow({ candidate, constituencies, onAssign, onReload }) {
                     @{candidate.username}
                     {candidate.email && <> · {candidate.email}</>}
                     {candidate.phone && <> · {candidate.phone}</>}
+                </div>
+                <div className="mt-1.5">
+                    {assigned ? (
+                        <span className="inline-flex items-center gap-1 text-xs bg-brand/10 text-brand px-2 py-0.5 rounded-full font-medium">
+                            <i className="fas fa-map-marker-alt text-[10px]" />
+                            {candidate.constituency_name || assigned}
+                            {candidate.constituency_area && <span className="opacity-70">· {candidate.constituency_area}</span>}
+                        </span>
+                    ) : (
+                        <span className="inline-flex items-center gap-1 text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full">
+                            <i className="fas fa-triangle-exclamation text-[10px]" />
+                            কোনো constituency assign করা হয়নি
+                        </span>
+                    )}
                 </div>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
@@ -254,7 +267,7 @@ function CandidateRow({ candidate, constituencies, onAssign, onReload }) {
                     className={`${BTN_SECONDARY} text-xs`}
                     onClick={onAssign}
                 >
-                    <i className="fas fa-map-marker-alt" /> Constituency Assign
+                    <i className="fas fa-map-marker-alt" /> {assigned ? 'Constituency পরিবর্তন' : 'Constituency Assign'}
                 </button>
             </div>
         </div>

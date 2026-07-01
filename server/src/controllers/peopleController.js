@@ -90,13 +90,17 @@ async function assignConstituency(req, res) {
     const constituency = await candidateModel.findById(constituency_id);
     if (!constituency) throw new NotFoundError('Constituency not found');
 
+    const uid = parseInt(user_id, 10);
     await candidateModel.grantUserAccess({
-        userId: parseInt(user_id, 10),
+        userId: uid,
         candidateId: constituency_id,
         role: 'candidate',
         grantedBy: req.user.user_id,
-        politicalCandidateId: parseInt(user_id, 10),
+        politicalCandidateId: uid,
     });
+    // A political candidate represents exactly one constituency — drop any
+    // previous candidate-role grants so the assignment doesn't accumulate.
+    await candidateModel.revokeCandidateGrants(uid, constituency_id);
 
     res.json({ success: true });
 }

@@ -112,8 +112,25 @@ async function remove(userId) {
 }
 
 async function listByRole(role) {
+    // For political candidates (role='candidate'), also surface their currently
+    // assigned constituency (the most recent role='candidate' grant), so the UI
+    // can show it and pre-select it in the assign dropdown.
     return many(
-        `SELECT ${PUBLIC_FIELDS} FROM users WHERE role = $1 AND is_active = true ORDER BY name`,
+        `SELECT ${PUBLIC_FIELDS.split(',').map((f) => 'u.' + f.trim()).join(', ')},
+                uc.candidate_id       AS constituency_id,
+                c.name                AS constituency_name,
+                c.constituency        AS constituency_area
+           FROM users u
+           LEFT JOIN LATERAL (
+                SELECT candidate_id
+                  FROM user_candidates
+                 WHERE user_id = u.user_id AND role = 'candidate'
+                 ORDER BY granted_at DESC
+                 LIMIT 1
+           ) uc ON true
+           LEFT JOIN candidates c ON c.candidate_id = uc.candidate_id
+          WHERE u.role = $1 AND u.is_active = true
+          ORDER BY u.name`,
         [role]
     );
 }
