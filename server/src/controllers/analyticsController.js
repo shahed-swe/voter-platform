@@ -5,12 +5,15 @@ function tenant(req) {
     if (!req.candidateId) throw new ForbiddenError('No candidate selected');
     return req.candidateId;
 }
+function pcId(req) {
+    return req.user?.political_candidate_id || null;
+}
 
 async function overview(req, res) {
-    res.json({ success: true, overview: await m.overview(tenant(req)) });
+    res.json({ success: true, overview: await m.overview(tenant(req), pcId(req)) });
 }
 async function supportDistribution(req, res) {
-    res.json({ success: true, support_distribution: await m.supportDistribution(tenant(req)) });
+    res.json({ success: true, support_distribution: await m.supportDistribution(tenant(req), pcId(req)) });
 }
 async function demographics(req, res) {
     res.json({ success: true, demographics: await m.demographics(tenant(req)) });
@@ -18,25 +21,25 @@ async function demographics(req, res) {
 async function villagePerformance(req, res) {
     res.json({
         success: true,
-        village_performance: await m.villagePerformance(tenant(req), { limit: parseInt(req.query.limit || 50, 10) }),
+        village_performance: await m.villagePerformance(tenant(req), { limit: parseInt(req.query.limit || 50, 10), politicalCandidateId: pcId(req) }),
     });
 }
 async function canvasserPerformance(req, res) {
     res.json({
         success: true,
-        canvasser_performance: await m.canvasserPerformance(tenant(req), { limit: parseInt(req.query.limit || 50, 10) }),
+        canvasser_performance: await m.canvasserPerformance(tenant(req), { limit: parseInt(req.query.limit || 50, 10), politicalCandidateId: pcId(req) }),
     });
 }
 async function dailyTrends(req, res) {
     res.json({
         success: true,
-        daily_trends: await m.dailyTrends(tenant(req), { days: parseInt(req.query.days || 30, 10) }),
+        daily_trends: await m.dailyTrends(tenant(req), { days: parseInt(req.query.days || 30, 10), politicalCandidateId: pcId(req) }),
     });
 }
 async function issues(req, res) {
     res.json({
         success: true,
-        issues: await m.issues(tenant(req), { limit: parseInt(req.query.limit || 50, 10) }),
+        issues: await m.issues(tenant(req), { limit: parseInt(req.query.limit || 50, 10), politicalCandidateId: pcId(req) }),
     });
 }
 async function canvassingRecords(req, res) {
@@ -45,6 +48,7 @@ async function canvassingRecords(req, res) {
         records: await m.canvassingRecords(tenant(req), {
             limit: parseInt(req.query.limit || 200, 10),
             offset: parseInt(req.query.offset || 0, 10),
+            politicalCandidateId: pcId(req),
         }),
     });
 }

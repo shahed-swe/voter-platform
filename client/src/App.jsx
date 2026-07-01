@@ -6,6 +6,7 @@ import LoginPage from './pages/LoginPage.jsx';
 import DashboardPage from './pages/DashboardPage.jsx';
 import CanvassingPage from './pages/CanvassingPage.jsx';
 import AnalyticsPage from './pages/AnalyticsPage.jsx';
+import SurveyDataPage from './pages/SurveyDataPage.jsx';
 import ElectionResultsPage from './pages/ElectionResultsPage.jsx';
 import AdminPage from './pages/AdminPage.jsx';
 import CandidatesListPage from './pages/admin/CandidatesListPage.jsx';
@@ -31,6 +32,7 @@ export default function App() {
                 <Route path="/dashboard"        element={<DashboardPage />} />
                 <Route path="/canvassing"       element={<CanvassingPage />} />
                 <Route path="/analytics"        element={<AnalyticsPage />} />
+                <Route path="/survey-data"      element={<SurveyDataPage />} />
                 <Route path="/election-results" element={<ElectionResultsPage />} />
                 <Route
                     path="/admin"

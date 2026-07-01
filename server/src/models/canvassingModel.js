@@ -1,24 +1,31 @@
 const { query, one, many, withTransaction } = require('../db/pool');
 
-async function findById(candidateId, canvassId) {
+// Every read below is scoped to (constituency, political candidate). When
+// politicalCandidateId is null (super-admin or single-candidate constituency)
+// the `$N IS NULL OR ...` guard makes the filter a no-op so all rows show.
+
+async function findById(candidateId, canvassId, politicalCandidateId = null) {
     return one(
-        `SELECT * FROM canvassing WHERE candidate_id = $1 AND canvass_id = $2`,
-        [candidateId, canvassId]
+        `SELECT * FROM canvassing
+          WHERE candidate_id = $1 AND canvass_id = $2
+            AND ($3::bigint IS NULL OR political_candidate_id = $3)`,
+        [candidateId, canvassId, politicalCandidateId]
     );
 }
 
-async function historyForVoter(candidateId, voterId) {
+async function historyForVoter(candidateId, voterId, politicalCandidateId = null) {
     return many(
         `SELECT c.*, u.name AS canvasser_name, u.username
            FROM canvassing c
            JOIN users u ON u.user_id = c.user_id
           WHERE c.candidate_id = $1 AND c.voter_id = $2
+            AND ($3::bigint IS NULL OR c.political_candidate_id = $3)
           ORDER BY c.canvass_date DESC`,
-        [candidateId, voterId]
+        [candidateId, voterId, politicalCandidateId]
     );
 }
 
-async function locationsByVillage(candidateId, villageId) {
+async function locationsByVillage(candidateId, villageId, politicalCandidateId = null) {
     return many(
         `SELECT c.canvass_id, c.voter_id, c.latitude, c.longitude, c.support_rating,
                 c.support_level, c.canvass_date, v.name AS voter_name
@@ -26,48 +33,65 @@ async function locationsByVillage(candidateId, villageId) {
            JOIN voters v ON v.voter_id = c.voter_id
           WHERE c.candidate_id = $1
             AND v.village_id = $2
+            AND ($3::bigint IS NULL OR c.political_candidate_id = $3)
             AND c.latitude IS NOT NULL
             AND c.longitude IS NOT NULL`,
-        [candidateId, villageId]
+        [candidateId, villageId, politicalCandidateId]
     );
 }
 
-async function allLocations(candidateId, { limit = 5000 } = {}) {
+async function allLocations(candidateId, { limit = 5000, politicalCandidateId = null } = {}) {
     return many(
         `SELECT canvass_id, voter_id, latitude, longitude, support_rating, support_level, canvass_date
            FROM canvassing
           WHERE candidate_id = $1
+            AND ($3::bigint IS NULL OR political_candidate_id = $3)
             AND latitude IS NOT NULL AND longitude IS NOT NULL
           ORDER BY canvass_date DESC
           LIMIT $2`,
-        [candidateId, limit]
+        [candidateId, limit, politicalCandidateId]
     );
 }
 
-async function listVoterRecords(candidateId, { limit = 200, offset = 0 } = {}) {
+async function listVoterRecords(candidateId, { limit = 200, offset = 0, search = null, politicalCandidateId = null } = {}) {
+    const params = [candidateId, politicalCandidateId];
+    let searchClause = '';
+    if (search) {
+        params.push(`%${search}%`);
+        searchClause = `AND (v.name ILIKE $${params.length} OR v.sos_vid ILIKE $${params.length})`;
+    }
+    params.push(limit);
+    const limitIdx = params.length;
+    params.push(offset);
+    const offsetIdx = params.length;
     return many(
-        `SELECT c.*, v.name AS voter_name, v.sos_vid, v.voter_area_name, u.name AS canvasser_name
+        `SELECT c.*, v.name AS voter_name, v.sos_vid, v.voter_area_name, v.ward,
+                u.name AS canvasser_name
            FROM canvassing c
            JOIN voters v ON v.voter_id = c.voter_id
            JOIN users u ON u.user_id = c.user_id
           WHERE c.candidate_id = $1
+            AND ($2::bigint IS NULL OR c.political_candidate_id = $2)
+            ${searchClause}
           ORDER BY c.canvass_date DESC
-          LIMIT $2 OFFSET $3`,
-        [candidateId, limit, offset]
+          LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+        params
     );
 }
 
-async function stats(candidateId) {
+async function stats(candidateId, politicalCandidateId = null) {
     return one(
         `SELECT
             COUNT(*)                                                     AS total_canvasses,
             COUNT(DISTINCT voter_id)                                     AS unique_voters,
             COUNT(*) FILTER (WHERE support_rating >= 4)                  AS strong_support,
             COUNT(*) FILTER (WHERE support_rating <= 2)                  AS weak_support,
-            COUNT(*) FILTER (WHERE is_undecided)                         AS undecided
+            COUNT(*) FILTER (WHERE is_undecided)                         AS undecided,
+            COUNT(*) FILTER (WHERE follow_up_needed)                     AS follow_up
            FROM canvassing
-          WHERE candidate_id = $1`,
-        [candidateId]
+          WHERE candidate_id = $1
+            AND ($2::bigint IS NULL OR political_candidate_id = $2)`,
+        [candidateId, politicalCandidateId]
     );
 }
 

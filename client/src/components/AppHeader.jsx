@@ -10,10 +10,11 @@ const LINK_ACTIVE = 'bg-brand text-white border-brand';
 const LINK_IDLE   = 'bg-white text-brand border-brand hover:bg-brand/5';
 
 const MAIN_NAV = [
-    { to: '/dashboard',        label: 'Dashboard',  icon: 'fa-map' },
-    { to: '/canvassing',       label: 'Canvassing', icon: 'fa-clipboard-check' },
-    { to: '/analytics',        label: 'Analytics',  icon: 'fa-chart-line' },
-    { to: '/election-results', label: 'Elections',  icon: 'fa-poll' },
+    { to: '/dashboard',        label: 'Dashboard',   icon: 'fa-map' },
+    { to: '/canvassing',       label: 'Canvassing',  icon: 'fa-clipboard-check' },
+    { to: '/survey-data',      label: 'Survey Data', icon: 'fa-clipboard-list' },
+    { to: '/analytics',        label: 'Analytics',   icon: 'fa-chart-line' },
+    { to: '/election-results', label: 'Elections',   icon: 'fa-poll' },
 ];
 
 const ADMIN_DROPDOWN = [
