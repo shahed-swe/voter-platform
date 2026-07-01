@@ -42,8 +42,13 @@ export default function CandidateSwitcher() {
 
     const isSuper = !!user?.is_super_admin;
     const grants = user?.candidates || [];
+    // Volunteers navigate via the dedicated candidate switcher (which already
+    // conveys the constituency per candidate). Showing a constituency switcher
+    // for them would list the same constituency once per candidate grant —
+    // duplicate + ambiguous. So hide it for volunteers.
+    const isVolunteer = user?.role === 'volunteer';
     // Only show the switcher when the user has options; super_admins always do.
-    const showSwitcher = isSuper || grants.length > 1;
+    const showSwitcher = !isVolunteer && (isSuper || grants.length > 1);
     if (!showSwitcher) return null;
 
     function toggle() {
