@@ -11,12 +11,21 @@ const { AuthError, ValidationError, ForbiddenError } = require('../utils/errors'
  *  - regular users: must belong to ≥1 candidate; we auto-activate the first
  *    one when there's exactly one.
  */
-async function buildTokenPayload(user, { forceCandidate } = {}) {
+async function buildTokenPayload(user, { forceCandidate, forcePoliticalCandidate } = {}) {
     const grants = await candidateModel.listForUser(user.user_id);
     const isSuper = !!user.is_super_admin;
 
+    // A volunteer may hold several grants for the SAME constituency under
+    // different political candidates. The active grant is therefore identified by
+    // (constituency, political_candidate) — not constituency alone.
     const activeCandidate = forceCandidate || grants[0]?.candidate_id || null;
-    const activeGrant = grants.find((g) => g.candidate_id === activeCandidate) || grants[0] || null;
+    const inCandidate = grants.filter((g) => g.candidate_id === activeCandidate);
+    const activeGrant =
+        (forcePoliticalCandidate != null
+            && inCandidate.find((g) => String(g.political_candidate_id) === String(forcePoliticalCandidate)))
+        || inCandidate[0]
+        || grants[0]
+        || null;
 
     // Ward restriction and political_candidate_id apply only to the active grant.
     // Volunteers see only their allowed wards; political candidates see everything
@@ -35,12 +44,17 @@ async function buildTokenPayload(user, { forceCandidate } = {}) {
         role:                  user.role,
         is_super_admin:        isSuper,
         candidates:            grants.map((g) => ({
+            grant_id:              g.grant_id,
             id:                    g.candidate_id,
+            constituency:          g.constituency,
+            constituency_name:     g.name,
             role:                  g.role,
             allowed_wards:         g.allowed_wards || null,
             political_candidate_id: g.political_candidate_id || null,
+            political_candidate_name: g.political_candidate_name || null,
         })),
         active_candidate:      activeCandidate,
+        active_political_candidate_id: politicalCandidateId,
         allowed_wards:         allowedWards,
         political_candidate_id: politicalCandidateId,
     };
@@ -122,7 +136,7 @@ async function verify(req, res) {
  * a super_admin.
  */
 async function switchCandidate(req, res) {
-    const { candidate_id } = req.body || {};
+    const { candidate_id, political_candidate_id } = req.body || {};
     if (!candidate_id) throw new ValidationError('candidate_id required');
 
     const fullUser = await userModel.findById(req.user.user_id);
@@ -137,10 +151,19 @@ async function switchCandidate(req, res) {
         if (!role) throw new ForbiddenError('You do not have access to this candidate');
     }
 
-    const payload = await buildTokenPayload(fullUser, { forceCandidate: candidate_id });
+    const payload = await buildTokenPayload(fullUser, {
+        forceCandidate: candidate_id,
+        forcePoliticalCandidate: political_candidate_id,
+    });
     const token = sign(payload);
 
-    res.json({ success: true, token, active_candidate: candidate });
+    res.json({
+        success: true,
+        token,
+        active_candidate: candidate,
+        active_political_candidate_id: payload.active_political_candidate_id,
+        allowed_wards: payload.allowed_wards,
+    });
 }
 
 module.exports = { login, logout, me, verify, switchCandidate };

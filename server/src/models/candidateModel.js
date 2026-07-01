@@ -18,12 +18,15 @@ async function listAll() {
 /** Returns the array of {candidate_id, role, allowed_wards, political_candidate_id} the user has access to. */
 async function listForUser(userId) {
     return many(
-        `SELECT uc.candidate_id, uc.role, uc.allowed_wards, uc.political_candidate_id,
+        `SELECT uc.id AS grant_id, uc.candidate_id, uc.role, uc.allowed_wards,
+                uc.political_candidate_id,
+                pc.name AS political_candidate_name,
                 c.name, c.constituency, c.title, c.subtitle
            FROM user_candidates uc
            JOIN candidates c ON c.candidate_id = uc.candidate_id
+           LEFT JOIN users pc ON pc.user_id = uc.political_candidate_id
           WHERE uc.user_id = $1 AND c.status = 'active'
-          ORDER BY c.name`,
+          ORDER BY c.name, pc.name`,
         [userId]
     );
 }
@@ -55,13 +58,16 @@ async function create({ candidateId, name, constituency, title, subtitle, logoUr
 }
 
 async function grantUserAccess({ userId, candidateId, role, grantedBy, allowedWards, politicalCandidateId }) {
+    // Natural key is (user_id, candidate_id, political_candidate_id) so a volunteer
+    // can hold separate grants for the same constituency under different political
+    // candidates. Re-granting the same triple just updates role/wards.
     await query(
         `INSERT INTO user_candidates (user_id, candidate_id, role, granted_by, allowed_wards, political_candidate_id)
          VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (user_id, candidate_id) DO UPDATE
+         ON CONFLICT ON CONSTRAINT user_candidates_natural_key DO UPDATE
            SET role = EXCLUDED.role,
                allowed_wards = EXCLUDED.allowed_wards,
-               political_candidate_id = EXCLUDED.political_candidate_id`,
+               granted_by = EXCLUDED.granted_by`,
         [userId, candidateId, role, grantedBy || null, allowedWards || null, politicalCandidateId || null]
     );
 }

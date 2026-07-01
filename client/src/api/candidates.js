@@ -8,5 +8,8 @@ export const remove  = (id)            =>
 export const grantUser  = (id, body)   => client.post(`/candidates/${id}/users`, body).then((r) => r.data);
 export const revokeUser = (id, userId) => client.delete(`/candidates/${id}/users/${userId}`).then((r) => r.data);
 
-export const switchActive = (candidateId) =>
-    client.post('/auth/switch-candidate', { candidate_id: candidateId }).then((r) => r.data);
+export const switchActive = (candidateId, politicalCandidateId) =>
+    client.post('/auth/switch-candidate', {
+        candidate_id: candidateId,
+        political_candidate_id: politicalCandidateId,
+    }).then((r) => r.data);

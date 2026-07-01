@@ -56,8 +56,9 @@ export function AuthProvider({ children }) {
                 .then((res) => {
                     if (res?.user) {
                         const cand = res.active_candidate || null;
-                        persist(state.token, res.user, cand);
-                        setState((s) => ({ ...s, user: res.user, candidate: cand, loading: false }));
+                        const u = { ...res.user, candidates: res.candidates || [] };
+                        persist(state.token, u, cand);
+                        setState((s) => ({ ...s, user: u, candidate: cand, loading: false }));
                     } else {
                         logout();
                     }
@@ -79,23 +80,33 @@ export function AuthProvider({ children }) {
             persist(res.token, res.user, null);
             const me = await authApi.me().catch(() => ({}));
             const cand = me?.active_candidate || null;
-            persist(res.token, res.user, cand);
-            setState({ token: res.token, user: res.user, candidate: cand, loading: false });
-            return res.user;
+            const u = { ...res.user, candidates: me?.candidates || res.candidates || [] };
+            persist(res.token, u, cand);
+            setState({ token: res.token, user: u, candidate: cand, loading: false });
+            return u;
         },
         [persist]
     );
 
     const switchCandidate = useCallback(
-        async (candidateId) => {
-            const res = await candidatesApi.switchActive(candidateId);
+        async (candidateId, politicalCandidateId) => {
+            const res = await candidatesApi.switchActive(candidateId, politicalCandidateId);
             if (!res?.success) throw new Error(res?.error || 'Switch failed');
             const newToken = res.token;
             const cand = res.active_candidate || null;
+            // Reflect the newly-active grant's ward restriction + political candidate
+            // on the persisted user so a volunteer's map scopes correctly after switch.
+            const nextUser = state.user
+                ? {
+                    ...state.user,
+                    allowed_wards: res.allowed_wards ?? state.user.allowed_wards,
+                    political_candidate_id: res.active_political_candidate_id ?? state.user.political_candidate_id,
+                }
+                : state.user;
             // Persist only — DO NOT setState here. The caller is about to
             // navigate; an intermediate setState triggers a re-render that
             // races the navigation and can leave the React tree half-rendered.
-            persist(newToken, state.user, cand);
+            persist(newToken, nextUser, cand);
             return cand;
         },
         [persist, state.user]
@@ -108,8 +119,9 @@ export function AuthProvider({ children }) {
         const me = await authApi.me().catch(() => null);
         if (!me?.user) return null;
         const cand = me.active_candidate || null;
-        persist(state.token, me.user, cand);
-        setState((s) => ({ ...s, user: me.user, candidate: cand }));
+        const u = { ...me.user, candidates: me.candidates || [] };
+        persist(state.token, u, cand);
+        setState((s) => ({ ...s, user: u, candidate: cand }));
         return cand;
     }, [state.token, persist]);
 

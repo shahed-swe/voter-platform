@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext.jsx';
 import CandidateSwitcher from './CandidateSwitcher.jsx';
+import VolunteerCandidateSwitcher from './VolunteerCandidateSwitcher.jsx';
 
 const LINK_BASE = 'inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium border transition-colors whitespace-nowrap';
 const LINK_ACTIVE = 'bg-brand text-white border-brand';
@@ -158,6 +159,7 @@ export default function AppHeader() {
 
             {/* Right */}
             <div className="flex items-center gap-3 flex-shrink-0">
+                <VolunteerCandidateSwitcher />
                 <CandidateSwitcher />
                 <div className="flex items-center gap-2">
                     <div className="h-9 w-9 rounded-full bg-brand text-white flex items-center justify-center font-semibold text-sm">
