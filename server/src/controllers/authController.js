@@ -78,6 +78,8 @@ async function login(req, res) {
             role: payload.role,
             is_super_admin: payload.is_super_admin,
             password_changed: user.password_changed,
+            allowed_wards: payload.allowed_wards,
+            political_candidate_id: payload.political_candidate_id,
         },
         candidates: payload.candidates,
         active_candidate: payload.active_candidate,
@@ -102,6 +104,8 @@ async function me(req, res) {
         user: {
             ...user,
             is_super_admin: !!req.user.is_super_admin,
+            allowed_wards: req.user.allowed_wards || null,
+            political_candidate_id: req.user.political_candidate_id || null,
         },
         candidates: req.user.candidates || [],
         active_candidate: activeCandidate,

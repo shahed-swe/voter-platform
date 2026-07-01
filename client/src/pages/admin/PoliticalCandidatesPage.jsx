@@ -177,6 +177,16 @@ export default function PoliticalCandidatesPage() {
 
     useEffect(() => { reload(); }, []);
 
+    async function handleDelete(c) {
+        if (!confirm(`"${c.name}" (@${c.username}) candidate-কে ডিলিট করবেন? এটি ফেরানো যাবে না।`)) return;
+        try {
+            await peopleApi.deleteCandidate(c.user_id);
+            reload();
+        } catch (err) {
+            alert(err.response?.data?.error || err.message);
+        }
+    }
+
     if (error) return <ErrorState error={error} />;
     if (!candidates) return <LoadingState />;
 
@@ -205,6 +215,7 @@ export default function PoliticalCandidatesPage() {
                             key={c.user_id}
                             candidate={c}
                             onAssign={() => setAssigning(c)}
+                            onDelete={() => handleDelete(c)}
                         />
                     ))}
                 </div>
@@ -230,7 +241,7 @@ export default function PoliticalCandidatesPage() {
     );
 }
 
-function CandidateRow({ candidate, onAssign }) {
+function CandidateRow({ candidate, onAssign, onDelete }) {
     const assigned = candidate.constituency_id;
 
     return (
@@ -268,6 +279,13 @@ function CandidateRow({ candidate, onAssign }) {
                     onClick={onAssign}
                 >
                     <i className="fas fa-map-marker-alt" /> {assigned ? 'Constituency পরিবর্তন' : 'Constituency Assign'}
+                </button>
+                <button
+                    className="text-xs border border-red-200 text-red-600 px-2 py-1.5 rounded-md hover:bg-red-50"
+                    onClick={onDelete}
+                    title="Candidate ডিলিট করুন"
+                >
+                    <i className="fas fa-trash" />
                 </button>
             </div>
         </div>

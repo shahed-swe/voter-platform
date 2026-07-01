@@ -105,6 +105,18 @@ async function assignConstituency(req, res) {
     res.json({ success: true });
 }
 
+/** DELETE /api/people/candidates/:user_id — super-admin deletes a political candidate */
+async function deleteCandidate(req, res) {
+    requireSuperAdmin(req);
+    const uid = parseInt(req.params.user_id, 10);
+    const user = await userModel.findById(uid);
+    if (!user || user.role !== 'candidate') throw new NotFoundError('Political candidate not found');
+    // Hard delete: user_candidates grants cascade; canvassing.political_candidate_id
+    // is set null by its FK. (A candidate being removed is typically an unused entry.)
+    await userModel.remove(uid);
+    res.json({ success: true });
+}
+
 // ──────────────────────────── volunteers ─────────────────────────────────────
 
 /**
@@ -215,7 +227,16 @@ async function removeVolunteer(req, res) {
     const { constituency_id } = req.query;
     if (!constituency_id) throw new ValidationError('constituency_id required');
 
-    await candidateModel.revokeUserAccess(parseInt(req.params.user_id, 10), constituency_id);
+    const uid = parseInt(req.params.user_id, 10);
+    await candidateModel.revokeUserAccess(uid, constituency_id);
+
+    // If the volunteer no longer belongs to any constituency, delete the account
+    // entirely so it doesn't linger as an orphaned login.
+    const remaining = await candidateModel.listForUser(uid);
+    const user = await userModel.findById(uid);
+    if (user?.role === 'volunteer' && remaining.length === 0) {
+        await userModel.remove(uid);
+    }
     res.json({ success: true });
 }
 
@@ -223,6 +244,7 @@ module.exports = {
     createCandidate,
     listCandidates,
     assignConstituency,
+    deleteCandidate,
     createOrAssignVolunteer,
     listVolunteers,
     updateVolunteerWards,

@@ -90,6 +90,7 @@ export default function DynamicDashboard() {
                 onLeafClick={handleLeafClick}
                 pinnedVoter={pinnedVoter}
                 onPinnedVoterClick={(v) => setActiveVoter(v)}
+                allowedWards={allowedWards}
             />
 
             {/* Left: geo navigator + voter filters */}

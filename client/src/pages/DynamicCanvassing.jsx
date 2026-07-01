@@ -76,6 +76,7 @@ export default function DynamicCanvassing() {
                     onLeafClick={handleLeafClick}
                     pinnedVoter={pinnedVoter}
                     onPinnedVoterClick={(v) => setActiveVoter(v)}
+                    allowedWards={allowedWards}
                 />
             </div>
 

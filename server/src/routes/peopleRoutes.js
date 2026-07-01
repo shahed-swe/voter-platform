@@ -11,6 +11,7 @@ router.use(verifyToken);
 router.post  ('/candidates',                      asyncHandler(c.createCandidate));
 router.get   ('/candidates',                      asyncHandler(c.listCandidates));
 router.put   ('/candidates/:user_id/constituency',asyncHandler(c.assignConstituency));
+router.delete('/candidates/:user_id',             asyncHandler(c.deleteCandidate));
 
 // ── Volunteers (candidate or super-admin) ─────────────────────────────────────
 router.post  ('/volunteers',                      asyncHandler(c.createOrAssignVolunteer));

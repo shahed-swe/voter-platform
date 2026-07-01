@@ -11,6 +11,9 @@ export const createCandidate = (data) =>
 export const assignConstituency = (userId, constituencyId) =>
     client.put(`/people/candidates/${userId}/constituency`, { constituency_id: constituencyId }).then((r) => r.data);
 
+export const deleteCandidate = (userId) =>
+    client.delete(`/people/candidates/${userId}`).then((r) => r.data);
+
 // ── Volunteers ────────────────────────────────────────────────────────────────
 
 export const listVolunteers = (constituencyId, politicalCandidateId) =>

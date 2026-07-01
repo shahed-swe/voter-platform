@@ -6,6 +6,7 @@ import 'leaflet/dist/leaflet.css';
 import * as layersApi from '../api/layers.js';
 import CanvassedVotersModal from './dashboard/CanvassedVotersModal.jsx';
 import { LoadingState, ErrorState } from './LoadingState.jsx';
+import { wardLabelToScope } from '../utils/geoScope.js';
 
 // Blue teardrop pin for pinned voter
 const voterPin = L.divIcon({
@@ -103,6 +104,7 @@ export default function DynamicMap({
     onLeafClick,         // optional: ({wardLabel, feature}) => void — fired when a 'voters' leaf is clicked
     pinnedVoter,         // optional: voter object to show as a map pin at the ward centre
     onPinnedVoterClick,  // optional: () => void — fired when the voter pin is clicked
+    allowedWards,        // optional: string[] (Bengali digits) — restrict the ward layer to these wards only
 }) {
     const allLayers = Array.isArray(config?.layers) ? config.layers : [];
     // Drill layers form the click-to-drill hierarchy; overlay layers are
@@ -205,13 +207,25 @@ export default function DynamicMap({
         return () => { cancelled = true; };
     }, [JSON.stringify(drillStack.map((s) => s.id)), candidateId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+    // Restrict a ward layer's features to the volunteer's allowed wards.
+    // Non-ward layers and unrestricted users pass through unchanged.
+    function restrictWards(spec, data) {
+        if (!allowedWards?.length || spec?.id !== 'ward' || !data?.features) return data;
+        const features = data.features.filter((f) => {
+            const scope = wardLabelToScope(f.properties?.[spec.label_from || 'name']);
+            return !scope?.ward || allowedWards.includes(scope.ward);
+        });
+        return { ...data, features };
+    }
+
     // Resolve data for each visible layer index
     function dataForIndex(idx) {
         const spec = layersSpec[idx];
         if (!spec) return null;
-        if (idx === 0) return dataByLayer[spec.id];
-        const ancestorIds = drillStack.slice(0, idx).map((s) => s.id).join('>');
-        return dataByLayer[`${spec.id}|${ancestorIds}`];
+        const raw = idx === 0
+            ? dataByLayer[spec.id]
+            : dataByLayer[`${spec.id}|${drillStack.slice(0, idx).map((s) => s.id).join('>')}`];
+        return restrictWards(spec, raw);
     }
 
     // Compute the best available centre for the voter pin.
