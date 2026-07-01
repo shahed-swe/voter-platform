@@ -19,3 +19,10 @@ ALTER TABLE users ALTER COLUMN email DROP NOT NULL;
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
 ALTER TABLE users ADD CONSTRAINT users_role_check
     CHECK (role = ANY (ARRAY['admin', 'sub_admin', 'volunteer', 'candidate']));
+
+-- user_candidates.role has the same allowed set (migration 008). Granting a
+-- political candidate access to a constituency uses role='candidate', which
+-- otherwise fails user_candidates_role_check with a 23514 violation.
+ALTER TABLE user_candidates DROP CONSTRAINT IF EXISTS user_candidates_role_check;
+ALTER TABLE user_candidates ADD CONSTRAINT user_candidates_role_check
+    CHECK (role = ANY (ARRAY['admin', 'sub_admin', 'volunteer', 'candidate']));
