@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
 import * as peopleApi from '../../api/people.js';
 import * as candidatesApi from '../../api/candidates.js';
+import MultiSelect from '../../components/MultiSelect.jsx';
 import { LoadingState, ErrorState, EmptyState, Spinner } from '../../components/LoadingState.jsx';
 import { useAuth } from '../../auth/AuthContext.jsx';
+
+const constituencyOpts = (list) => (list || []).map((c) => ({ value: c.candidate_id, label: `${c.name} — ${c.constituency}` }));
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -22,7 +25,8 @@ const BTN_SECONDARY = 'inline-flex items-center gap-2 border border-gray-300 tex
 // ── Create candidate modal ────────────────────────────────────────────────────
 
 function CreateCandidateModal({ constituencies, onClose, onCreated }) {
-    const [form, setForm] = useState({ name: '', username: '', password: '', email: '', phone: '', constituency_id: '' });
+    const [form, setForm] = useState({ name: '', username: '', password: '', email: '', phone: '' });
+    const [picked, setPicked] = useState([]);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(null);
     const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -33,7 +37,7 @@ function CreateCandidateModal({ constituencies, onClose, onCreated }) {
         try {
             const res = await peopleApi.createCandidate({
                 ...form,
-                constituency_id: form.constituency_id || undefined,
+                constituency_ids: picked.length ? picked : undefined,
             });
             onCreated(res);
         } catch (err) {
@@ -67,16 +71,17 @@ function CreateCandidateModal({ constituencies, onClose, onCreated }) {
                     <Field label="Phone (optional)">
                         <input className={INPUT} value={form.phone} onChange={set('phone')} placeholder="+88017..." />
                     </Field>
-                    <Field label="Constituency (optional — পরেও assign করা যাবে)">
-                        <select className={INPUT} value={form.constituency_id} onChange={set('constituency_id')}>
-                            <option value="">— এখন assign না করলেও চলবে —</option>
-                            {(constituencies || []).map((c) => (
-                                <option key={c.candidate_id} value={c.candidate_id}>
-                                    {c.name} — {c.constituency}
-                                </option>
-                            ))}
-                        </select>
-                    </Field>
+                    <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                            Constituency (একাধিক — optional, পরেও assign করা যাবে)
+                        </label>
+                        <MultiSelect
+                            options={constituencyOpts(constituencies)}
+                            value={picked}
+                            onChange={setPicked}
+                            placeholder="— এখন assign না করলেও চলবে —"
+                        />
+                    </div>
                     <div className="flex justify-end gap-2 pt-2">
                         <button type="button" className={BTN_SECONDARY} onClick={onClose}>বাতিল</button>
                         <button type="submit" className={BTN_PRIMARY} disabled={busy}>
@@ -93,16 +98,16 @@ function CreateCandidateModal({ constituencies, onClose, onCreated }) {
 // ── Assign constituency modal ─────────────────────────────────────────────────
 
 function AssignConstituencyModal({ candidate, constituencies, onClose, onSaved }) {
-    const [constituencyId, setConstituencyId] = useState(candidate.constituency_id || '');
+    const [picked, setPicked] = useState(candidate.constituency_id ? [candidate.constituency_id] : []);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(null);
 
     async function submit(e) {
         e.preventDefault();
-        if (!constituencyId) return;
+        if (!picked.length) return;
         setBusy(true); setError(null);
         try {
-            await peopleApi.assignConstituency(candidate.user_id, constituencyId);
+            await peopleApi.assignConstituency(candidate.user_id, picked);
             onSaved();
         } catch (err) {
             setError(err.response?.data?.error || err.message);
@@ -118,27 +123,15 @@ function AssignConstituencyModal({ candidate, constituencies, onClose, onSaved }
                 </div>
                 <form className="p-5 space-y-3" onSubmit={submit}>
                     {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded p-2">{error}</div>}
-                    {candidate.constituency_id && (
-                        <div className="text-xs text-gray-500">
-                            বর্তমান: <span className="font-medium text-gray-700">{candidate.constituency_name || candidate.constituency_id}</span>
-                        </div>
-                    )}
-                    <select
-                        className={INPUT}
-                        value={constituencyId}
-                        onChange={(e) => setConstituencyId(e.target.value)}
-                        required
-                    >
-                        <option value="">Constituency নির্বাচন করুন</option>
-                        {constituencies.map((c) => (
-                            <option key={c.candidate_id} value={c.candidate_id}>
-                                {c.name} — {c.constituency}
-                            </option>
-                        ))}
-                    </select>
+                    <MultiSelect
+                        options={constituencyOpts(constituencies)}
+                        value={picked}
+                        onChange={setPicked}
+                        placeholder="Constituency নির্বাচন করুন"
+                    />
                     <div className="flex justify-end gap-2 pt-2">
                         <button type="button" className={BTN_SECONDARY} onClick={onClose}>বাতিল</button>
-                        <button type="submit" className={BTN_PRIMARY} disabled={busy || !constituencyId}>
+                        <button type="submit" className={BTN_PRIMARY} disabled={busy || !picked.length}>
                             {busy ? <Spinner size="sm" /> : <i className="fas fa-check" />}
                             Assign করুন
                         </button>

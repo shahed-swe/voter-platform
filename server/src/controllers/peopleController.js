@@ -42,10 +42,11 @@ function actingAs(req) {
 /** POST /api/people/candidates — super-admin creates a political candidate */
 async function createCandidate(req, res) {
     requireSuperAdmin(req);
-    const { name, username, password, email, phone, constituency_id } = req.body || {};
+    const { name, username, password, email, phone, constituency_id, constituency_ids } = req.body || {};
     if (!name || !username || !password) {
         throw new ValidationError('name, username and password are required');
     }
+    const list = (constituency_ids?.length ? constituency_ids : (constituency_id ? [constituency_id] : []));
 
     const hash = await hashPassword(password);
     const user = await userModel.create({
@@ -57,17 +58,17 @@ async function createCandidate(req, res) {
         phone: phone || null,
     });
 
-    if (constituency_id) {
+    for (const cid of list) {
         await candidateModel.grantUserAccess({
             userId: user.user_id,
-            candidateId: constituency_id,
+            candidateId: cid,
             role: 'candidate',
             grantedBy: req.user.user_id,
             politicalCandidateId: user.user_id,
         });
     }
 
-    res.status(201).json({ success: true, candidate: user, constituency_id: constituency_id || null });
+    res.status(201).json({ success: true, candidate: user, constituencies: list });
 }
 
 /** GET /api/people/candidates — super-admin lists all political candidates */
@@ -77,30 +78,31 @@ async function listCandidates(req, res) {
     res.json({ success: true, candidates: users });
 }
 
-/** PUT /api/people/candidates/:user_id/constituency — assign/change constituency */
+/** PUT /api/people/candidates/:user_id/constituency — assign one or many constituencies */
 async function assignConstituency(req, res) {
     requireSuperAdmin(req);
     const { user_id } = req.params;
-    const { constituency_id } = req.body || {};
-    if (!constituency_id) throw new ValidationError('constituency_id required');
-
-    const user = await userModel.findById(parseInt(user_id, 10));
-    if (!user || user.role !== 'candidate') throw new NotFoundError('Political candidate not found');
-
-    const constituency = await candidateModel.findById(constituency_id);
-    if (!constituency) throw new NotFoundError('Constituency not found');
+    const { constituency_id, constituency_ids } = req.body || {};
+    const list = (constituency_ids?.length ? constituency_ids : (constituency_id ? [constituency_id] : []));
+    if (!list.length) throw new ValidationError('at least one constituency required');
 
     const uid = parseInt(user_id, 10);
-    await candidateModel.grantUserAccess({
-        userId: uid,
-        candidateId: constituency_id,
-        role: 'candidate',
-        grantedBy: req.user.user_id,
-        politicalCandidateId: uid,
-    });
-    // A political candidate represents exactly one constituency — drop any
-    // previous candidate-role grants so the assignment doesn't accumulate.
-    await candidateModel.revokeCandidateGrants(uid, constituency_id);
+    const user = await userModel.findById(uid);
+    if (!user || user.role !== 'candidate') throw new NotFoundError('Political candidate not found');
+
+    for (const cid of list) {
+        const constituency = await candidateModel.findById(cid);
+        if (!constituency) throw new NotFoundError(`Constituency ${cid} not found`);
+        await candidateModel.grantUserAccess({
+            userId: uid,
+            candidateId: cid,
+            role: 'candidate',
+            grantedBy: req.user.user_id,
+            politicalCandidateId: uid,
+        });
+    }
+    // Drop any candidate-role grants for constituencies no longer in the list.
+    await candidateModel.revokeCandidateGrants(uid, list);
 
     res.json({ success: true });
 }

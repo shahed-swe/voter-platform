@@ -8,8 +8,10 @@ export const listCandidates = () =>
 export const createCandidate = (data) =>
     client.post('/people/candidates', data).then((r) => r.data);
 
-export const assignConstituency = (userId, constituencyId) =>
-    client.put(`/people/candidates/${userId}/constituency`, { constituency_id: constituencyId }).then((r) => r.data);
+export const assignConstituency = (userId, constituencyIds) =>
+    client.put(`/people/candidates/${userId}/constituency`, {
+        constituency_ids: Array.isArray(constituencyIds) ? constituencyIds : [constituencyIds],
+    }).then((r) => r.data);
 
 export const deleteCandidate = (userId) =>
     client.delete(`/people/candidates/${userId}`).then((r) => r.data);

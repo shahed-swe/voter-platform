@@ -106,12 +106,13 @@ async function revokeUserAccess(userId, candidateId) {
  * Used when re-assigning a political candidate to a single constituency so they
  * never accumulate stale assignments.
  */
-async function revokeCandidateGrants(userId, exceptCandidateId = null) {
+async function revokeCandidateGrants(userId, except = null) {
+    const keep = except == null ? [] : (Array.isArray(except) ? except : [except]);
     const params = [userId];
     let extra = '';
-    if (exceptCandidateId != null) {
-        params.push(exceptCandidateId);
-        extra = `AND candidate_id <> $${params.length}`;
+    if (keep.length) {
+        params.push(keep);
+        extra = `AND candidate_id <> ALL($${params.length})`;
     }
     await query(
         `DELETE FROM user_candidates WHERE user_id = $1 AND role = 'candidate' ${extra}`,
