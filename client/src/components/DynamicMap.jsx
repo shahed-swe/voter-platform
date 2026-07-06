@@ -38,6 +38,18 @@ const overlayPin = L.divIcon({
     iconAnchor: [8, 16],
 });
 
+// Pulsing blue dot for the canvasser's own live location (#8).
+const myLocationIcon = L.divIcon({
+    className: '',
+    html: `<div style="position:relative;width:18px;height:18px;">
+        <span style="position:absolute;inset:0;border-radius:50%;background:rgba(37,99,235,0.35);animation:vmpulse 1.8s ease-out infinite"></span>
+        <span style="position:absolute;top:3px;left:3px;width:12px;height:12px;border-radius:50%;background:#2563eb;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.4)"></span>
+    </div>
+    <style>@keyframes vmpulse{0%{transform:scale(0.6);opacity:0.9}100%{transform:scale(2.4);opacity:0}}</style>`,
+    iconSize: [18, 18],
+    iconAnchor: [9, 9],
+});
+
 // ----- Style helpers -------------------------------------------------------
 
 function bucketColor(value, buckets, palette) {
@@ -137,6 +149,19 @@ export default function DynamicMap({
     const [activeBuilding, setActiveBuilding] = useState(null);
     const [overlayOn, setOverlayOn]     = useState({});  // overlayId → bool
     const [overlayData, setOverlayData] = useState({});  // overlayId → FeatureCollection
+    const [myLocation, setMyLocation]   = useState(null); // [lat, lng] — canvasser's live position (#8)
+
+    // Track the canvasser's location. Needs an HTTPS secure context (see docs/HTTPS.md);
+    // fails silently on http:// (except localhost).
+    useEffect(() => {
+        if (!('geolocation' in navigator)) return;
+        const id = navigator.geolocation.watchPosition(
+            (pos) => setMyLocation([pos.coords.latitude, pos.coords.longitude]),
+            () => { /* permission denied / unavailable — no marker */ },
+            { enableHighAccuracy: true, maximumAge: 15000, timeout: 20000 }
+        );
+        return () => navigator.geolocation.clearWatch(id);
+    }, []);
 
     // Helper: update drill stack (internal or external)
     function setDrillStack(val) {
@@ -412,6 +437,15 @@ export default function DynamicMap({
                         <Tooltip direction="top" offset={[0, -34]} opacity={1}>
                             <span className="text-xs font-semibold">{pinnedVoter.name || pinnedVoter.voter_id}</span>
                             <span className="block text-[10px] text-gray-500">{pinnedVoter.ward}</span>
+                        </Tooltip>
+                    </Marker>
+                )}
+
+                {/* Canvasser's own live location (#8) */}
+                {myLocation && (
+                    <Marker position={myLocation} icon={myLocationIcon} zIndexOffset={1000}>
+                        <Tooltip direction="top" offset={[0, -8]} opacity={1}>
+                            <span className="text-xs font-semibold bn">আপনি এখানে</span>
                         </Tooltip>
                     </Marker>
                 )}
