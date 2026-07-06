@@ -14,8 +14,26 @@ const GENDER_ICON = {
     Other:  { icon: 'fa-genderless', cls: 'text-gray-500' },
 };
 
+// Prefer the per-political-candidate canvass status (has_canvass / follow-up from
+// the filtered query) over the shared voters.status column, which isn't maintained
+// once a constituency has multiple candidates. (#3, #9)
+function effectiveStatus(voter) {
+    if (voter.has_canvass != null) {
+        if (!voter.has_canvass) return 'Not visited';
+        return voter.canvass_follow_up ? 'Follow-up needed' : 'Visited';
+    }
+    return voter.status || 'Not visited';
+}
+
+const STATUS_LABEL = {
+    'Not visited':      'পরিদর্শিত নয়',
+    'Visited':          'পরিদর্শিত',
+    'Follow-up needed': 'ফলো-আপ প্রয়োজন',
+};
+
 export default function VoterCard({ voter, onClick }) {
     const g = GENDER_ICON[voter.gender] || GENDER_ICON.Other;
+    const status = effectiveStatus(voter);
     return (
         <div
             onClick={() => onClick?.(voter)}
@@ -26,11 +44,11 @@ export default function VoterCard({ voter, onClick }) {
                     {voter.name}
                 </div>
                 <span
-                    className={`text-[10px] font-medium px-2 py-0.5 rounded border whitespace-nowrap ${
-                        STATUS_STYLE[voter.status] || STATUS_STYLE['Not visited']
+                    className={`bn text-[10px] font-medium px-2 py-0.5 rounded border whitespace-nowrap ${
+                        STATUS_STYLE[status] || STATUS_STYLE['Not visited']
                     }`}
                 >
-                    {voter.status}
+                    {STATUS_LABEL[status] || status}
                 </span>
             </div>
 
