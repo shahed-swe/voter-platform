@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import * as mgmt from '../../api/management.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
+import SharedMultiSelect from '../../components/MultiSelect.jsx';
 import { LoadingState, ErrorState, EmptyState, Spinner } from '../../components/LoadingState.jsx';
 
 const INPUT = 'w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand focus:border-brand';
@@ -17,45 +18,17 @@ const ROLE_BADGE = {
     volunteer: 'bg-green-100 text-green-700',
 };
 
-// ── Multi-select chips (wards / voter areas) ────────────────────────────────────
-function MultiSelect({ label, options, value, onChange, loading, placeholder }) {
-    const [open, setOpen] = useState(false);
-    const toggle = (o) => onChange(value.includes(o) ? value.filter((x) => x !== o) : [...value, o]);
+// Labeled wrapper around the shared MultiSelect. Accepts string options or
+// { value, label } objects.
+function MultiSelect({ label, options, value, onChange, loading, placeholder, disabled }) {
+    const opts = (options || []).map((o) => (typeof o === 'string' ? { value: o, label: o } : o));
     return (
         <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
-            <div className="border border-gray-300 rounded-md">
-                <button type="button" className="w-full text-left px-3 py-2 text-sm flex justify-between items-center"
-                        onClick={() => setOpen((o) => !o)} disabled={loading}>
-                    <span className={value.length ? 'text-gray-800' : 'text-gray-400'}>
-                        {loading ? 'লোড হচ্ছে...' : value.length ? `${value.length} নির্বাচিত` : (placeholder || 'নির্বাচন করুন')}
-                    </span>
-                    <i className={`fas fa-chevron-${open ? 'up' : 'down'} text-xs text-gray-400`} />
-                </button>
-                {open && !loading && (
-                    <div className="max-h-48 overflow-y-auto border-t border-gray-100">
-                        {options.length === 0 ? (
-                            <div className="px-3 py-2 text-xs text-gray-400">কিছু পাওয়া যায়নি।</div>
-                        ) : options.map((o) => (
-                            <button key={o} type="button" onClick={() => toggle(o)}
-                                    className="w-full text-left px-3 py-1.5 text-sm hover:bg-brand/5 flex items-center gap-2 bn">
-                                <i className={`fas ${value.includes(o) ? 'fa-check-square text-brand' : 'fa-square text-gray-300'}`} />
-                                {o}
-                            </button>
-                        ))}
-                    </div>
-                )}
-            </div>
-            {value.length > 0 && (
-                <div className="flex flex-wrap gap-1 mt-1.5">
-                    {value.map((v) => (
-                        <span key={v} className="bn text-xs bg-brand/10 text-brand px-2 py-0.5 rounded-full flex items-center gap-1">
-                            {v}
-                            <button type="button" onClick={() => toggle(v)} className="hover:text-red-500"><i className="fas fa-times text-[10px]" /></button>
-                        </span>
-                    ))}
-                </div>
-            )}
+            <SharedMultiSelect
+                options={opts} value={value} onChange={onChange}
+                loading={loading} placeholder={placeholder} disabled={disabled} bn
+            />
         </div>
     );
 }
@@ -65,9 +38,11 @@ function CreateUserModal({ ctx, onClose, onCreated }) {
     const [form, setForm] = useState({
         role: ctx.creatable_roles[0] || 'volunteer',
         name: '', username: '', password: '', email: '', phone: '',
-        constituency_id: ctx.constituencies[0]?.candidate_id || '',
         political_candidate_id: '',
     });
+    const [constituencies, setConstituencies] = useState(
+        ctx.constituencies[0]?.candidate_id ? [ctx.constituencies[0].candidate_id] : []
+    );
     const [wardOpts, setWardOpts]   = useState([]);
     const [areaOpts, setAreaOpts]   = useState([]);
     const [wards, setWards]         = useState([]);
@@ -83,25 +58,29 @@ function CreateUserModal({ ctx, onClose, onCreated }) {
     const needsArea = form.role === 'volunteer';
     const superPicksCampaign = ctx.role === 'super_admin' && form.role !== 'candidate';
 
-    // Load wards when constituency changes (for sub_admin/volunteer).
-    useEffect(() => {
-        if (!needsWard || !form.constituency_id) { setWardOpts([]); return; }
-        setLoadingW(true);
-        mgmt.wards(form.constituency_id)
-            .then((r) => setWardOpts(r.wards || []))
-            .catch(() => setWardOpts([]))
-            .finally(() => setLoadingW(false));
-    }, [form.constituency_id, needsWard]);
+    const constituencyOpts = ctx.constituencies.map((c) => ({ value: c.candidate_id, label: `${c.name} — ${c.constituency}` }));
 
-    // Load voter areas when wards change (for volunteer).
+    // Load wards across ALL selected constituencies (union) for sub_admin/volunteer.
     useEffect(() => {
-        if (!needsArea || !form.constituency_id || wards.length === 0) { setAreaOpts([]); return; }
+        if (!needsWard || constituencies.length === 0) { setWardOpts([]); return; }
+        let cancelled = false;
+        setLoadingW(true);
+        Promise.all(constituencies.map((cid) => mgmt.wards(cid).then((r) => r.wards || []).catch(() => [])))
+            .then((lists) => { if (!cancelled) setWardOpts([...new Set(lists.flat())]); })
+            .finally(() => { if (!cancelled) setLoadingW(false); });
+        return () => { cancelled = true; };
+    }, [JSON.stringify(constituencies), needsWard]);
+
+    // Load voter areas across the selected constituencies + wards (for volunteer).
+    useEffect(() => {
+        if (!needsArea || constituencies.length === 0 || wards.length === 0) { setAreaOpts([]); return; }
+        let cancelled = false;
         setLoadingA(true);
-        mgmt.voterAreas(form.constituency_id, wards)
-            .then((r) => setAreaOpts(r.voter_areas || []))
-            .catch(() => setAreaOpts([]))
-            .finally(() => setLoadingA(false));
-    }, [form.constituency_id, JSON.stringify(wards), needsArea]);
+        Promise.all(constituencies.map((cid) => mgmt.voterAreas(cid, wards).then((r) => r.voter_areas || []).catch(() => [])))
+            .then((lists) => { if (!cancelled) setAreaOpts([...new Set(lists.flat())]); })
+            .finally(() => { if (!cancelled) setLoadingA(false); });
+        return () => { cancelled = true; };
+    }, [JSON.stringify(constituencies), JSON.stringify(wards), needsArea]);
 
     // Super-admin needs to pick which campaign (political candidate) a non-candidate belongs to.
     useEffect(() => {
@@ -118,7 +97,7 @@ function CreateUserModal({ ctx, onClose, onCreated }) {
                 role: form.role,
                 name: form.name, username: form.username, password: form.password,
                 email: form.email || undefined, phone: form.phone || undefined,
-                constituency_id: form.constituency_id,
+                constituency_ids: constituencies,
                 political_candidate_id: superPicksCampaign ? (form.political_candidate_id || undefined) : undefined,
                 wards: needsWard ? wards : undefined,
                 voter_areas: needsArea ? areas : undefined,
@@ -165,14 +144,13 @@ function CreateUserModal({ ctx, onClose, onCreated }) {
                         </div>
                     </div>
 
-                    <div>
-                        <label className="block text-xs font-medium text-gray-600 mb-1">Constituency *</label>
-                        <select className={INPUT} value={form.constituency_id} onChange={set('constituency_id')} required>
-                            {ctx.constituencies.map((c) => (
-                                <option key={c.candidate_id} value={c.candidate_id}>{c.name} — {c.constituency}</option>
-                            ))}
-                        </select>
-                    </div>
+                    <MultiSelect
+                        label="Constituency * (একাধিক নির্বাচন করা যাবে)"
+                        options={constituencyOpts}
+                        value={constituencies}
+                        onChange={setConstituencies}
+                        placeholder="Constituency নির্বাচন করুন"
+                    />
 
                     {superPicksCampaign && (
                         <div>

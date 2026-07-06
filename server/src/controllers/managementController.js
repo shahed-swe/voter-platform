@@ -173,19 +173,23 @@ async function createUser(req, res) {
     const role = callerRole(req);
     const {
         user_id: existingUserId, name, username, password, email, phone,
-        role: targetRole, constituency_id, wards: wardList, voter_areas: areaList,
+        role: targetRole, constituency_id, constituency_ids, wards: wardList, voter_areas: areaList,
     } = req.body || {};
 
     if (!targetRole) throw new ValidationError('role is required');
     if (!CREATABLE[role]?.includes(targetRole)) {
         throw new ForbiddenError(`A ${role} cannot create a ${targetRole}.`);
     }
-    if (!constituency_id) throw new ValidationError('constituency_id is required');
+    // Accept one or many constituencies (multi-select).
+    const constituencies = (constituency_ids?.length ? constituency_ids : (constituency_id ? [constituency_id] : []));
+    if (!constituencies.length) throw new ValidationError('at least one constituency is required');
 
     // Region within the caller's scope.
     const myConstituencies = callerConstituencies(req);
-    if (myConstituencies && !myConstituencies.includes(constituency_id)) {
-        throw new ForbiddenError('Constituency is outside your scope');
+    if (myConstituencies) {
+        for (const cid of constituencies) {
+            if (!myConstituencies.includes(cid)) throw new ForbiddenError(`Constituency ${cid} is outside your scope`);
+        }
     }
     if (targetRole === 'sub_admin' && !wardList?.length) {
         throw new ValidationError('At least one ward is required for a sub-admin');
@@ -221,15 +225,18 @@ async function createUser(req, res) {
         ? (targetRole === 'candidate' ? target.user_id : (req.body.political_candidate_id || null))
         : campaignId(req);
 
-    await candidateModel.grantUserAccess({
-        userId: target.user_id,
-        candidateId: constituency_id,
-        role: targetRole,
-        grantedBy: req.user.user_id,
-        allowedWards: (targetRole === 'sub_admin' || targetRole === 'volunteer') ? (wardList || null) : null,
-        allowedVoterAreas: targetRole === 'volunteer' ? (areaList || null) : null,
-        politicalCandidateId,
-    });
+    // One grant per selected constituency.
+    for (const cid of constituencies) {
+        await candidateModel.grantUserAccess({
+            userId: target.user_id,
+            candidateId: cid,
+            role: targetRole,
+            grantedBy: req.user.user_id,
+            allowedWards: (targetRole === 'sub_admin' || targetRole === 'volunteer') ? (wardList || null) : null,
+            allowedVoterAreas: targetRole === 'volunteer' ? (areaList || null) : null,
+            politicalCandidateId,
+        });
+    }
 
     res.status(201).json({ success: true, user: target });
 }
