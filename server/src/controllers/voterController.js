@@ -13,6 +13,30 @@ async function getById(req, res) {
     res.json({ success: true, voter });
 }
 
+/**
+ * GET /api/voters/geo-options?wards=১৪,১৫
+ * Ward + voter-area options for the multi-select navigation. Respects volunteer
+ * ward/area restrictions. Areas are scoped to the requested wards.
+ */
+async function geoOptions(req, res) {
+    const cid = tenant(req);
+    const requestedWards = (req.query.wards || '').split(',').map((s) => s.trim()).filter(Boolean);
+    const allowedWards = req.user?.allowed_wards;
+    const allowedAreas = req.user?.allowed_voter_areas;
+
+    let wards = await voterModel.geoWardOptions(cid);
+    if (allowedWards?.length) wards = wards.filter((w) => allowedWards.includes(w.value));
+
+    let areaWards = requestedWards;
+    if (allowedWards?.length) {
+        areaWards = (areaWards.length ? areaWards : allowedWards).filter((w) => allowedWards.includes(w));
+    }
+    let areas = await voterModel.geoAreaOptions(cid, areaWards);
+    if (allowedAreas?.length) areas = areas.filter((a) => allowedAreas.includes(a.value));
+
+    res.json({ success: true, wards, voter_areas: areas });
+}
+
 async function search(req, res) {
     const limit = req.query.limit ? parseInt(req.query.limit, 10) : 50;
     const voters = await voterModel.search(tenant(req), req.params.query, { limit });
@@ -154,6 +178,7 @@ async function areaOptions(req, res) {
 
 module.exports = {
     getById,
+    geoOptions,
     search,
     byVillage,
     byVoterArea,

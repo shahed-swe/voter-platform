@@ -6,7 +6,9 @@ import FilteredVoterListPanel from '../components/canvassing/FilteredVoterListPa
 import CanvassFormModal from '../components/canvassing/CanvassFormModal.jsx';
 import * as votersApi from '../api/voters.js';
 import { useAuth } from '../auth/AuthContext.jsx';
-import { geoStackToScope, wardLabelToScope } from '../utils/geoScope.js';
+import { wardLabelToScope } from '../utils/geoScope.js';
+
+const EMPTY_SCOPE = { ward: [], voter_area: [] };
 
 export default function DynamicDashboard() {
     const { candidate, user } = useAuth();
@@ -15,7 +17,7 @@ export default function DynamicDashboard() {
     const filterConfig = candidate?.filter_config || [];
     const mapLayers    = (cfg.layers || []).filter((l) => !l.overlay);
 
-    const [geoNavStack, setGeoNavStack]     = useState([]);
+    const [navScope, setNavScope]           = useState(EMPTY_SCOPE); // multi-select ward + area
     const [filters, setFilters]             = useState({});
     const [stats, setStats]                 = useState(null);
     const [voterModal, setVoterModal]       = useState(null);
@@ -29,7 +31,7 @@ export default function DynamicDashboard() {
     const [lastCandidateId, setLastCandidateId] = useState(candidate?.candidate_id);
     if (candidate?.candidate_id !== lastCandidateId) {
         setLastCandidateId(candidate?.candidate_id);
-        setGeoNavStack([]);
+        setNavScope(EMPTY_SCOPE);
         setFilters({});
         setStats(null);
         setVoterModal(null);
@@ -37,12 +39,15 @@ export default function DynamicDashboard() {
         setActiveVoter(null);
     }
 
-    const wardScope = geoStackToScope(geoNavStack);
+    const wardScope = {
+        ...(navScope.ward?.length ? { ward: navScope.ward } : {}),
+        ...(navScope.voter_area?.length ? { voter_area: navScope.voter_area } : {}),
+    };
 
     // Clear pin whenever navigation changes (ward or voter area)
     useEffect(() => {
         setPinnedVoter(null);
-    }, [JSON.stringify(geoNavStack)]);
+    }, [JSON.stringify(navScope)]);
 
     // Always load stats — including the initial whole-constituency view (no ward /
     // no filter). `stats_only` skips the voter list so the constituency-wide count
@@ -67,7 +72,7 @@ export default function DynamicDashboard() {
             .filter(([, v]) => v != null && v !== '' && !(Array.isArray(v) && v.length === 0))
             .map(([, v]) => (Array.isArray(v) ? v.join(', ') : v))
             .join(' › ') ||
-        geoNavStack.at(-1)?.label ||
+        (navScope.ward?.length ? `${navScope.ward.length} ওয়ার্ড নির্বাচিত` : null) ||
         candidate?.constituency ||
         candidate?.title;
 
@@ -84,12 +89,11 @@ export default function DynamicDashboard() {
             <DynamicMap
                 config={cfg}
                 candidateId={candidate?.candidate_id}
-                controlledDrill={geoNavStack}
-                onDrillChange={setGeoNavStack}
                 onLeafClick={handleLeafClick}
                 pinnedVoter={pinnedVoter}
                 onPinnedVoterClick={(v) => setActiveVoter(v)}
                 allowedWards={allowedWards}
+                focusWards={navScope.ward}
             />
 
             {/* Left: geo navigator + voter filters */}
@@ -98,11 +102,9 @@ export default function DynamicDashboard() {
                     {mapLayers.length > 0 && (
                         <GeoNavigator
                             key={candidate?.candidate_id}
-                            layers={mapLayers}
                             candidateId={candidate?.candidate_id}
-                            drillStack={geoNavStack}
-                            onSelect={setGeoNavStack}
-                            allowedWards={allowedWards}
+                            value={navScope}
+                            onChange={setNavScope}
                         />
                     )}
                     {filterConfig.length > 0 && (

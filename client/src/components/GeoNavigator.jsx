@@ -1,144 +1,65 @@
 import { useEffect, useState } from 'react';
-import * as layersApi from '../api/layers.js';
-import { wardLabelToScope } from '../utils/geoScope.js';
+import * as votersApi from '../api/voters.js';
+import MultiSelect from './MultiSelect.jsx';
 
 const BN = '০১২৩৪৫৬৭৮৯';
-function toBn(s) { return String(s).replace(/[0-9]/g, (d) => BN[+d]); }
+const toBn = (s) => String(s).replace(/[0-9]/g, (d) => BN[+d]);
 
 /**
- * Returns true if the option label identifies a ward that is in allowedWards.
- * allowedWards are in Bengali digits (e.g. ['৫২', '৫৩']).
- * Ward labels look like "Ward No. 52 (88)".
- */
-function isWardAllowed(label, allowedWards) {
-    const scope = wardLabelToScope(label);
-    if (!scope?.ward) return true; // not a ward label — always show
-    return allowedWards.includes(scope.ward);
-}
-
-/**
- * Cascading geo-layer navigation panel.
- * Fetches fresh data every time — no caching.
- * Renders a searchable select for each drillable layer.
- * When a feature is selected, the map drills into it and zooms.
+ * Multi-select map navigation: pick one or more WARDS and (within them) one or
+ * more VOTER AREAS. The selection drives the voter list + stats (arrays) and the
+ * map fits to the chosen wards. Volunteers only see their allowed wards/areas
+ * (the backend filters the options).
  *
  * Props:
- *   layers        — map_config.layers (non-overlay)
- *   candidateId   — used to trigger re-fetch on candidate switch
- *   drillStack    — [{id, label}, ...] — current drill state (controlled)
- *   onSelect      — (newDrillStack) => void
- *   allowedWards  — string[] | null — if set, only show these wards (Bengali digits)
+ *   candidateId  — refetch options on candidate switch
+ *   value        — { ward: string[], voter_area: string[] }
+ *   onChange     — (nextScope) => void
  */
-export default function GeoNavigator({ layers, candidateId, drillStack, onSelect, allowedWards }) {
-    const navLayers = (layers || []).filter(
-        (l) => !l.overlay
-            && l.click !== 'modal:canvassed_voters'
-            && l.click !== 'select'
-            && l.click !== 'voters'   // leaf layers (buildings) — selected by clicking the map, not a nav dropdown
-    );
+export default function GeoNavigator({ candidateId, value, onChange }) {
+    const scope = value || { ward: [], voter_area: [] };
+    const wards = scope.ward || [];
+    const areas = scope.voter_area || [];
 
-    // Per-layer options: { layerKey: [{id, label}] | null }
-    // null = not yet loaded/loading; [] = loaded but empty
-    const [opts, setOpts]       = useState({});
-    const [loading, setLoading] = useState({});
+    const [wardOpts, setWardOpts] = useState([]);
+    const [areaOpts, setAreaOpts] = useState([]);
+    const [loadingW, setLoadingW] = useState(false);
+    const [loadingA, setLoadingA] = useState(false);
 
-    // Reset everything when candidate switches
+    // Load ward options on mount / candidate switch.
     useEffect(() => {
-        setOpts({});
-        setLoading({});
+        let cancelled = false;
+        setLoadingW(true);
+        votersApi.geoOptions([])
+            .then((r) => { if (!cancelled) setWardOpts((r.wards || []).map((w) => ({ value: w.value, label: `ওয়ার্ড ${w.value} (${toBn(w.count)})`, count: null }))); })
+            .catch(() => { if (!cancelled) setWardOpts([]); })
+            .finally(() => { if (!cancelled) setLoadingW(false); });
+        return () => { cancelled = true; };
     }, [candidateId]);
 
-    // Load root layer whenever candidate changes (or on mount) — just fetches, no auto-select
+    // Load voter-area options whenever the selected wards change.
     useEffect(() => {
-        if (!navLayers.length) return;
-        const root = navLayers[0];
         let cancelled = false;
-        setLoading((m) => ({ ...m, [root.id]: true }));
-        layersApi.fetchSource(root.source)
-            .then((fc) => {
-                if (!cancelled) setOpts((m) => ({ ...m, [root.id]: toOpts(fc, root) }));
+        if (wards.length === 0) { setAreaOpts([]); return; }
+        setLoadingA(true);
+        votersApi.geoOptions(wards)
+            .then((r) => {
+                if (cancelled) return;
+                const opts = (r.voter_areas || []).map((a) => ({ value: a.value, label: a.value, count: a.count }));
+                setAreaOpts(opts);
+                // Drop any selected areas that are no longer available.
+                const valid = new Set(opts.map((o) => o.value));
+                const keep = areas.filter((a) => valid.has(a));
+                if (keep.length !== areas.length) onChange({ ward: wards, voter_area: keep });
             })
-            .catch(() => { if (!cancelled) setOpts((m) => ({ ...m, [root.id]: [] })); })
-            .finally(() => { if (!cancelled) setLoading((m) => ({ ...m, [root.id]: false })); });
+            .catch(() => { if (!cancelled) setAreaOpts([]); })
+            .finally(() => { if (!cancelled) setLoadingA(false); });
         return () => { cancelled = true; };
-    }, [candidateId, navLayers.length]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [JSON.stringify(wards), candidateId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Auto-select root when: options are loaded, stack is empty, and only 1 option exists.
-    // This is a SEPARATE effect from the fetch so it fires after the parent's reset
-    // (setGeoNavStack([])) has propagated — avoids the stale-closure bug where the fetch
-    // effect captured the old drillStack (e.g. [{id:'Dhaka-4'}]) from a previous candidate.
-    useEffect(() => {
-        if (!navLayers.length) return;
-        const root = navLayers[0];
-        const options = opts[root.id];
-        if (options?.length === 1 && drillStack.length === 0) {
-            onSelect([{ id: options[0].id, label: options[0].label }]);
-        }
-    }, [opts, drillStack.length, navLayers.length]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    // Auto-select when allowedWards restricts to exactly 1 ward and stack hasn't reached ward depth yet.
-    useEffect(() => {
-        if (!allowedWards?.length || navLayers.length < 2) return;
-        const wardLayer = navLayers[1];
-        const allOpts = opts[wardLayer.id];
-        if (!allOpts) return;
-        const filtered = allOpts.filter((o) => isWardAllowed(o.label, allowedWards));
-        if (filtered.length === 1 && drillStack.length === 1) {
-            onSelect([...drillStack.slice(0, 1), { id: filtered[0].id, label: filtered[0].label }]);
-        }
-    }, [opts, allowedWards, drillStack.length, navLayers.length]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    // Load each child layer fresh whenever the parent selection changes
-    useEffect(() => {
-        const tasks = [];
-        for (let i = 0; i < drillStack.length; i++) {
-            const childLayer = navLayers[i + 1];
-            if (!childLayer) break;
-            const parentId = drillStack[i]?.id;
-            if (!parentId) break;
-            tasks.push({ childLayer, parentId, depth: i + 1 });
-        }
-
-        if (!tasks.length) return;
-
-        let cancelled = false;
-        tasks.forEach(({ childLayer, parentId }) => {
-            setLoading((m) => ({ ...m, [childLayer.id]: true }));
-            setOpts((m) => ({ ...m, [childLayer.id]: null })); // clear stale
-            layersApi.fetchByParent(childLayer.source, 'parent_feature_id', parentId)
-                .then((fc) => {
-                    if (!cancelled) setOpts((m) => ({ ...m, [childLayer.id]: toOpts(fc, childLayer) }));
-                })
-                .catch(() => { if (!cancelled) setOpts((m) => ({ ...m, [childLayer.id]: [] })); })
-                .finally(() => { if (!cancelled) setLoading((m) => ({ ...m, [childLayer.id]: false })); });
-        });
-
-        return () => { cancelled = true; };
-    }, [drillStack, candidateId, navLayers.length]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    // Clear child layers when parent is deselected
-    useEffect(() => {
-        // Clear any layer deeper than current drill depth
-        const clearFrom = drillStack.length + 1; // index in navLayers to start clearing
-        if (clearFrom >= navLayers.length) return;
-        setOpts((m) => {
-            const next = { ...m };
-            for (let i = clearFrom; i < navLayers.length; i++) {
-                next[navLayers[i].id] = null;
-            }
-            return next;
-        });
-    }, [drillStack.length, navLayers.length]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    function selectAt(depth, featureId, featureLabel) {
-        if (!featureId) {
-            onSelect(drillStack.slice(0, depth));
-        } else {
-            onSelect([...drillStack.slice(0, depth), { id: featureId, label: featureLabel }]);
-        }
-    }
-
-    if (!navLayers.length) return null;
+    const setWards = (next) => onChange({ ward: next, voter_area: areas });
+    const setAreas = (next) => onChange({ ward: wards, voter_area: next });
+    const reset = () => onChange({ ward: [], voter_area: [] });
 
     return (
         <div className="bg-white border border-brand/30 rounded-lg shadow-sm overflow-hidden">
@@ -147,184 +68,50 @@ export default function GeoNavigator({ layers, candidateId, drillStack, onSelect
                     <i className="fas fa-map-location-dot mr-1.5 text-brand" />
                     Navigate Map
                 </span>
-                {drillStack.length > 0 && (
-                    <button className="text-xs text-brand hover:underline" onClick={() => onSelect([])}>
+                {(wards.length > 0 || areas.length > 0) && (
+                    <button className="text-xs text-brand hover:underline" onClick={reset}>
                         <i className="fas fa-arrow-left mr-1" />Reset
                     </button>
                 )}
             </div>
 
             <div className="p-3 space-y-3">
-                {navLayers.map((layer, i) => {
-                    const rawOptions = opts[layer.id] || [];
-                    // For volunteer ward restriction: filter ward options to only allowed ones
-                    const options = (allowedWards?.length && i === 1)
-                        ? rawOptions.filter((o) => isWardAllowed(o.label, allowedWards))
-                        : rawOptions;
-                    const isLoading = !!loading[layer.id];
-                    const disabled  = i > 0 && drillStack.length < i;
-                    const selectedId = drillStack[i]?.id || '';
+                <div>
+                    <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                        Ward <span className="text-gray-400 normal-case">(একাধিক নির্বাচন করা যাবে)</span>
+                    </label>
+                    <MultiSelect
+                        options={wardOpts}
+                        value={wards}
+                        onChange={setWards}
+                        loading={loadingW}
+                        placeholder="সব ওয়ার্ড"
+                        bn
+                    />
+                </div>
 
-                    // Hide root if it was auto-selected (only 1 option — no point showing the dropdown)
-                    const rootAutoSelected =
-                        i === 0 && options.length === 1 && drillStack[0]?.id === options[0]?.id;
-                    if (rootAutoSelected) return null;
+                <div>
+                    <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                        Voter Area / Village
+                    </label>
+                    <MultiSelect
+                        options={areaOpts}
+                        value={areas}
+                        onChange={setAreas}
+                        loading={loadingA}
+                        disabled={wards.length === 0}
+                        placeholder={wards.length === 0 ? 'আগে ওয়ার্ড নির্বাচন করুন' : 'সব এলাকা'}
+                        bn
+                    />
+                </div>
 
-                    // Hide ward dropdown if volunteer has exactly 1 ward (auto-selected above)
-                    const wardAutoSelected =
-                        allowedWards?.length && i === 1 && options.length === 1
-                        && drillStack[1]?.id === options[0]?.id;
-                    if (wardAutoSelected) return null;
-
-                    return (
-                        <div key={layer.id}>
-                            <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
-                                {layer.label}
-                            </label>
-                            {isLoading || (i > 0 && opts[layer.id] === null && !disabled) ? (
-                                <div className="text-xs text-gray-400 py-1">
-                                    <i className="fas fa-spinner fa-spin mr-1" /> Loading…
-                                </div>
-                            ) : (
-                                <SelectWithSearch
-                                    options={options}
-                                    value={selectedId}
-                                    disabled={disabled}
-                                    placeholder={`All ${layer.label}s`}
-                                    onChange={(id, label) => selectAt(i, id, label)}
-                                />
-                            )}
-                        </div>
-                    );
-                })}
-
-                {/* Breadcrumb */}
-                {drillStack.length > 1 && (
-                    <div className="text-xs text-gray-500 pt-1 border-t border-gray-100">
+                {(wards.length > 0 || areas.length > 0) && (
+                    <div className="text-xs text-gray-500 pt-1 border-t border-gray-100 bn">
                         <i className="fas fa-location-arrow mr-1 text-brand" />
-                        {drillStack.map((s, i) => (
-                            <span key={i}>
-                                {i > 0 && <span className="mx-0.5 text-gray-300">›</span>}
-                                <button
-                                    className="text-brand hover:underline"
-                                    onClick={() => onSelect(drillStack.slice(0, i + 1))}
-                                >
-                                    {s.label || s.id}
-                                </button>
-                            </span>
-                        ))}
+                        {wards.length} ওয়ার্ড{areas.length ? `, ${areas.length} এলাকা` : ''} নির্বাচিত
                     </div>
                 )}
             </div>
         </div>
     );
-}
-
-// ── Searchable select ────────────────────────────────────────────────────────
-
-function SelectWithSearch({ options, value, disabled, placeholder, onChange }) {
-    const [search, setSearch] = useState('');
-    const [open, setOpen]     = useState(false);
-
-    const filtered = search
-        ? options.filter((o) => o.label.toLowerCase().includes(search.toLowerCase()))
-        : options;
-
-    const selectedLabel = options.find((o) => o.id === value)?.label || '';
-
-    useEffect(() => {
-        if (!open) return;
-        const handler = () => setOpen(false);
-        document.addEventListener('mousedown', handler);
-        return () => document.removeEventListener('mousedown', handler);
-    }, [open]);
-
-    if (disabled) {
-        return (
-            <div className="w-full text-sm border border-gray-200 rounded px-2.5 py-1.5 text-gray-400 bg-gray-50 select-none">
-                {placeholder}
-            </div>
-        );
-    }
-
-    if (options.length <= 20) {
-        return (
-            <select
-                className="w-full text-sm border border-gray-200 rounded px-2 py-1.5 bg-white focus:border-brand outline-none"
-                value={value}
-                onChange={(e) => {
-                    const id = e.target.value;
-                    const lbl = options.find((o) => o.id === id)?.label || '';
-                    onChange(id, lbl);
-                }}
-            >
-                <option value="">{placeholder}</option>
-                {options.map((o) => (
-                    <option key={o.id} value={o.id}>{o.label}</option>
-                ))}
-            </select>
-        );
-    }
-
-    return (
-        <div className="relative" onMouseDown={(e) => e.stopPropagation()}>
-            <button
-                type="button"
-                className="w-full text-sm border border-gray-200 rounded px-2.5 py-1.5 bg-white text-left flex items-center justify-between focus:border-brand outline-none"
-                onClick={() => setOpen((o) => !o)}
-            >
-                <span className={selectedLabel ? 'text-gray-800' : 'text-gray-400'}>
-                    {selectedLabel || placeholder}
-                </span>
-                <i className={`fas fa-chevron-${open ? 'up' : 'down'} text-gray-400 text-xs`} />
-            </button>
-
-            {open && (
-                <div className="absolute z-[600] mt-1 w-full bg-white border border-gray-200 rounded shadow-lg">
-                    <div className="p-1.5 border-b border-gray-100">
-                        <input
-                            autoFocus
-                            type="text"
-                            className="w-full text-sm px-2 py-1 border border-gray-200 rounded outline-none focus:border-brand"
-                            placeholder="Search…"
-                            value={search}
-                            onChange={(e) => setSearch(e.target.value)}
-                        />
-                    </div>
-                    <div className="max-h-52 overflow-y-auto">
-                        <button
-                            type="button"
-                            className="w-full text-left px-3 py-1.5 text-sm text-gray-400 hover:bg-gray-50"
-                            onClick={() => { onChange('', ''); setOpen(false); setSearch(''); }}
-                        >
-                            {placeholder}
-                        </button>
-                        {filtered.map((o) => (
-                            <button
-                                key={o.id}
-                                type="button"
-                                className={`w-full text-left px-3 py-1.5 text-sm hover:bg-brand/10 ${o.id === value ? 'bg-brand/10 font-medium text-brand' : 'text-gray-800'}`}
-                                onClick={() => { onChange(o.id, o.label); setOpen(false); setSearch(''); }}
-                            >
-                                {o.label}
-                            </button>
-                        ))}
-                        {filtered.length === 0 && (
-                            <div className="px-3 py-2 text-xs text-gray-400">No results</div>
-                        )}
-                    </div>
-                </div>
-            )}
-        </div>
-    );
-}
-
-function toOpts(fc, layer) {
-    return (fc.features || [])
-        .map((f) => ({
-            id:    String(f.properties.feature_id ?? ''),
-            label: String(f.properties[layer.label_from || 'name'] ?? f.properties.feature_id ?? ''),
-        }))
-        .filter((o) => o.id)
-        .sort((a, b) => a.label.localeCompare(b.label, 'bn'));
 }

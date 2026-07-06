@@ -5,7 +5,9 @@ import GeoNavigator from '../components/GeoNavigator.jsx';
 import FilteredVoterListPanel from '../components/canvassing/FilteredVoterListPanel.jsx';
 import CanvassFormModal from '../components/canvassing/CanvassFormModal.jsx';
 import { useAuth } from '../auth/AuthContext.jsx';
-import { geoStackToScope, wardLabelToScope } from '../utils/geoScope.js';
+import { wardLabelToScope } from '../utils/geoScope.js';
+
+const EMPTY_SCOPE = { ward: [], voter_area: [] };
 
 export default function DynamicCanvassing() {
     const { candidate, user } = useAuth();
@@ -14,7 +16,7 @@ export default function DynamicCanvassing() {
     const filterConfig = candidate?.filter_config || [];
     const mapLayers    = (cfg.layers || []).filter((l) => !l.overlay);
 
-    const [geoNavStack, setGeoNavStack]     = useState([]);
+    const [navScope, setNavScope]           = useState(EMPTY_SCOPE); // { ward:[], voter_area:[] } (multi-select)
     const [filters, setFilters]             = useState({});
     const [activeVoter, setActiveVoter]     = useState(null);
     const [pinnedVoter, setPinnedVoter]     = useState(null);
@@ -28,22 +30,28 @@ export default function DynamicCanvassing() {
     const [lastCandidateId, setLastCandidateId] = useState(candidate?.candidate_id);
     if (candidate?.candidate_id !== lastCandidateId) {
         setLastCandidateId(candidate?.candidate_id);
-        setGeoNavStack([]);
+        setNavScope(EMPTY_SCOPE);
         setFilters({});
         setBuildingScope(null);
         setPinnedVoter(null);
     }
 
-    const geoScope = buildingScope ?? geoStackToScope(geoNavStack);
+    // Clicking a single building narrows to that building's ward; otherwise the
+    // multi-select nav scope (wards + areas) drives the list. Empty scope selects nothing.
+    const geoScope = buildingScope ?? {
+        ...(navScope.ward?.length ? { ward: navScope.ward } : {}),
+        ...(navScope.voter_area?.length ? { voter_area: navScope.voter_area } : {}),
+    };
 
+    // Selecting in the nav clears any single-building drill-down.
     useEffect(() => {
         setBuildingScope(null);
-    }, [geoNavStack]);
+    }, [JSON.stringify(navScope)]);
 
     // Clear pin whenever navigation changes (ward, voter area, or building)
     useEffect(() => {
         setPinnedVoter(null);
-    }, [JSON.stringify(geoNavStack), buildingScope]);
+    }, [JSON.stringify(navScope), buildingScope]);
 
     function handleLeafClick({ wardLabel, building }) {
         const s = wardLabelToScope(wardLabel);
@@ -54,10 +62,11 @@ export default function DynamicCanvassing() {
         setBuildingCtx(building || null);
     }
 
-    const scopeLabel =
-        (Object.values(geoScope).some(Boolean) ? geoNavStack[1]?.label || '' : null)
-        || geoNavStack.at(-1)?.label
-        || candidate?.title;
+    const scopeLabel = buildingScope
+        ? 'নির্বাচিত ভবন'
+        : navScope.ward?.length
+            ? `${navScope.ward.length} ওয়ার্ড${navScope.voter_area?.length ? `, ${navScope.voter_area.length} এলাকা` : ''}`
+            : candidate?.title;
 
     const hasLeftPanel = mapLayers.length > 0 || filterConfig.length > 0;
 
@@ -74,12 +83,11 @@ export default function DynamicCanvassing() {
                 <DynamicMap
                     config={cfg}
                     candidateId={candidate?.candidate_id}
-                    controlledDrill={geoNavStack}
-                    onDrillChange={setGeoNavStack}
                     onLeafClick={handleLeafClick}
                     pinnedVoter={pinnedVoter}
                     onPinnedVoterClick={(v) => setActiveVoter(v)}
                     allowedWards={allowedWards}
+                    focusWards={navScope.ward}
                 />
             </div>
 
@@ -89,11 +97,9 @@ export default function DynamicCanvassing() {
                     {mapLayers.length > 0 && (
                         <GeoNavigator
                             key={candidate?.candidate_id}
-                            layers={mapLayers}
                             candidateId={candidate?.candidate_id}
-                            drillStack={geoNavStack}
-                            onSelect={setGeoNavStack}
-                            allowedWards={allowedWards}
+                            value={navScope}
+                            onChange={setNavScope}
                         />
                     )}
                     {filterConfig.length > 0 && (

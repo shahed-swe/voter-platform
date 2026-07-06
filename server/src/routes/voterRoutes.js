@@ -6,6 +6,7 @@ const c = require('../controllers/voterController');
 router.use(verifyToken);
 
 router.get('/attribute-keys', asyncHandler(c.attributeKeys));
+router.get('/geo-options', asyncHandler(c.geoOptions));
 router.post('/area-options', asyncHandler(c.areaOptions));
 router.get('/areas', asyncHandler(c.listVoterAreas));
 router.get('/areas/:voter_area/stats', asyncHandler(c.voterAreaStats));

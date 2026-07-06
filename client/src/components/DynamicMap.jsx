@@ -122,6 +122,30 @@ function FitTo({ features }) {
     return null;
 }
 
+// Fit the map to a set of selected wards (multi-select nav). Fetches the ward
+// layer once and zooms to the matching ward polygons.
+function FitToWards({ focusWards, wardLayer }) {
+    const map = useMap();
+    useEffect(() => {
+        if (!focusWards?.length || !wardLayer) return;
+        let cancelled = false;
+        layersApi.fetchSource(wardLayer.source).then((fc) => {
+            if (cancelled) return;
+            const feats = (fc.features || []).filter((f) => {
+                const scope = wardLabelToScope(f.properties?.[wardLayer.label_from || 'name']);
+                return scope?.ward && focusWards.includes(scope.ward);
+            });
+            if (!feats.length) return;
+            try {
+                const b = L.geoJSON({ type: 'FeatureCollection', features: feats }).getBounds();
+                if (b.isValid()) map.fitBounds(b, { padding: [30, 30] });
+            } catch { /* ignore */ }
+        }).catch(() => {});
+        return () => { cancelled = true; };
+    }, [JSON.stringify(focusWards), wardLayer?.source]); // eslint-disable-line react-hooks/exhaustive-deps
+    return null;
+}
+
 // ----- Drill-state machine -------------------------------------------------
 //
 // `drillStack` is an array, one entry per CURRENTLY DRILLED-INTO layer above
@@ -142,6 +166,7 @@ export default function DynamicMap({
     pinnedVoter,         // optional: voter object to show as a map pin at the ward centre
     onPinnedVoterClick,  // optional: () => void — fired when the voter pin is clicked
     allowedWards,        // optional: string[] (Bengali digits) — restrict the ward layer to these wards only
+    focusWards,          // optional: string[] (Bengali digits) — fit/zoom the map to these wards
 }) {
     const allLayers = Array.isArray(config?.layers) ? config.layers : [];
     // Drill layers form the click-to-drill hierarchy; overlay layers are
@@ -490,6 +515,7 @@ export default function DynamicMap({
                 )}
 
                 <FitTo features={deepestData?.features} />
+                <FitToWards focusWards={focusWards} wardLayer={layersSpec[1]} />
             </MapContainer>
 
             {/* Breadcrumb of drill state — only when NOT externally controlled

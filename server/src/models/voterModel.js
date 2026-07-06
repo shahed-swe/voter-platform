@@ -352,10 +352,39 @@ async function attributeKeys(candidateId, { sampleLimit = 3 } = {}) {
     );
 }
 
+/** Distinct ward values (Bengali) for a candidate, with voter counts. For multi-select nav. */
+async function geoWardOptions(candidateId) {
+    return many(
+        `SELECT ward AS value, COUNT(*)::int AS count
+           FROM voters
+          WHERE candidate_id = $1 AND ward IS NOT NULL AND ward <> ''
+          GROUP BY ward
+          ORDER BY (regexp_replace(ward, '[^0-9০-৯]', '', 'g'))::text, ward`,
+        [candidateId]
+    );
+}
+
+/** Distinct voter_area_name values for a candidate, optionally within given wards. */
+async function geoAreaOptions(candidateId, wards) {
+    const params = [candidateId];
+    let wardClause = '';
+    if (wards?.length) { params.push(wards); wardClause = `AND ward = ANY($2)`; }
+    return many(
+        `SELECT voter_area_name AS value, COUNT(*)::int AS count
+           FROM voters
+          WHERE candidate_id = $1 AND voter_area_name IS NOT NULL AND voter_area_name <> '' ${wardClause}
+          GROUP BY voter_area_name
+          ORDER BY voter_area_name`,
+        params
+    );
+}
+
 module.exports = {
     findById,
     findBySosVid,
     search,
+    geoWardOptions,
+    geoAreaOptions,
     byVillage,
     byVoterArea,
     byVoterAreas,
