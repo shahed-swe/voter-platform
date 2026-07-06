@@ -16,6 +16,19 @@ function errorHandler(err, _req, res, _next) {
         return res.status(err.status).json(body);
     }
 
+    // Postgres unique-violation — surface a readable message instead of a bare 500.
+    // (#16: creating a user with an existing username showed "Internal server error".)
+    if (err && err.code === '23505') {
+        const isUsername = /username/i.test(err.constraint || err.detail || '');
+        return res.status(409).json({
+            success: false,
+            error: isUsername
+                ? 'এই username আগে থেকেই ব্যবহৃত হয়েছে — অন্য একটি username দিন।'
+                : 'This value already exists (duplicate).',
+            code: 'DUPLICATE',
+        });
+    }
+
     console.error('[error]', err);
     res.status(500).json({
         success: false,

@@ -196,7 +196,7 @@ const FILTERS = {
     ward:       { via: 'voters',    col: 'ward' },          // dhaka13 voters store ward_number
 };
 
-async function findByFilters(candidateId, { filters = {}, specs = [], status, search, limit = 500, offset = 0, politicalCandidateId = null } = {}) {
+async function findByFilters(candidateId, { filters = {}, specs = [], status, search, limit = 500, offset = 0, politicalCandidateId = null, statsOnly = false } = {}) {
     const where  = ['v.candidate_id = $1'];
     const params = [candidateId];
     let i = 2;
@@ -239,71 +239,81 @@ async function findByFilters(candidateId, { filters = {}, specs = [], status, se
         i = params.length + 1;
     }
 
-    // When a political candidate is scoped, map status filter to canvassing-based logic.
-    // Otherwise fall back to voters.status (single-candidate or super-admin contexts).
-    let canvassJoin = '';
-    if (politicalCandidateId) {
-        params.push(politicalCandidateId);
-        const pcIdx = params.length;
-        canvassJoin = `LEFT JOIN canvassing pc
-            ON pc.voter_id = v.voter_id
-           AND pc.candidate_id = $1
-           AND pc.political_candidate_id = $${pcIdx}`;
-
-        if (status === 'Visited') {
-            where.push(`pc.canvass_id IS NOT NULL AND pc.follow_up_needed = false`);
-        } else if (status === 'Not visited') {
-            where.push(`pc.canvass_id IS NULL`);
-        } else if (status === 'Follow-up needed') {
-            where.push(`pc.follow_up_needed = true`);
-        }
-        i = params.length + 1;
-    } else {
-        if (status) {
-            params.push(status);
-            where.push(`v.status = $${i++}`);
-        }
-    }
-
+    // Search is a scope filter (applies to both list + stats).
     if (search) {
         params.push(`%${search}%`);
-        where.push(`(v.name ILIKE $${i} OR v.sos_vid ILIKE $${i} OR v.address ILIKE $${i})`);
-        i++;
+        where.push(`(v.name ILIKE $${params.length} OR v.sos_vid ILIKE $${params.length} OR v.address ILIKE $${params.length})`);
     }
 
     const whereSql = `WHERE ${where.join(' AND ')}`;
 
-    // Per-political-candidate has_canvass and stats come from the canvassing join.
-    // Without isolation we use the legacy voters.status column.
-    const hasCanvassSql = politicalCandidateId
-        ? `pc.canvass_id IS NOT NULL`
-        : `EXISTS (SELECT 1 FROM canvassing c WHERE c.voter_id = v.voter_id AND c.candidate_id = $1)`;
+    // Canvass status is ALWAYS derived from the canvassing table (never the shared
+    // voters.status column, which isn't maintained once a constituency has multiple
+    // political candidates), scoped to the active political candidate — or, when
+    // none is set (super-admin), any canvass in the constituency.
+    params.push(politicalCandidateId);      // may be null → "any political candidate"
+    const pcIdx = params.length;
+    i = params.length + 1;
 
-    const statsSql = politicalCandidateId
-        ? `SELECT COUNT(*)::int                                                          AS total,
-                  COUNT(*) FILTER (WHERE pc.canvass_id IS NOT NULL
-                                     AND pc.follow_up_needed = false)::int              AS visited,
-                  COUNT(*) FILTER (WHERE pc.canvass_id IS NULL)::int                   AS not_visited,
-                  COUNT(*) FILTER (WHERE pc.follow_up_needed = true)::int              AS follow_up
-             FROM voters v ${canvassJoin} ${whereSql}`
-        : `SELECT COUNT(*)::int                                              AS total,
-                  COUNT(*) FILTER (WHERE v.status = 'Visited')::int          AS visited,
-                  COUNT(*) FILTER (WHERE v.status = 'Not visited')::int      AS not_visited,
-                  COUNT(*) FILTER (WHERE v.status = 'Follow-up needed')::int AS follow_up
-             FROM voters v ${whereSql}`;
+    // Fast stats: a plain voter COUNT for the total, plus a small DISTINCT-ON over
+    // the (tiny) canvassing table for visited/follow-up — instead of a LATERAL over
+    // every voter. The status TAB does NOT affect stats (they show the full breakdown).
+    const statsSql = `
+        WITH latest AS (
+            SELECT DISTINCT ON (c.voter_id) c.voter_id, c.follow_up_needed
+              FROM canvassing c
+              JOIN voters v ON v.voter_id = c.voter_id
+              ${whereSql}
+               AND c.candidate_id = $1
+               AND ($${pcIdx}::bigint IS NULL OR c.political_candidate_id = $${pcIdx})
+             ORDER BY c.voter_id, c.canvass_date DESC
+        )
+        SELECT (SELECT COUNT(*) FROM voters v ${whereSql})::int          AS total,
+               (SELECT COUNT(*) FROM latest WHERE NOT follow_up_needed)::int AS visited,
+               (SELECT COUNT(*) FROM latest WHERE follow_up_needed)::int     AS follow_up`;
+
+    const statsP = one(statsSql, params).then((r) => ({
+        total:       r?.total || 0,
+        visited:     r?.visited || 0,
+        follow_up:   r?.follow_up || 0,
+        not_visited: Math.max(0, (r?.total || 0) - (r?.visited || 0) - (r?.follow_up || 0)),
+    }));
+
+    if (statsOnly) {
+        return { voters: [], stats: await statsP };
+    }
+
+    // The list DOES honour the status tab. A LATERAL gives each row its latest
+    // canvass; the tab filters on it. The list is always scope-limited (a ward/area),
+    // so the LATERAL runs over a small set.
+    const canvassJoin = `LEFT JOIN LATERAL (
+        SELECT c.canvass_id, c.follow_up_needed
+          FROM canvassing c
+         WHERE c.voter_id = v.voter_id
+           AND c.candidate_id = $1
+           AND ($${pcIdx}::bigint IS NULL OR c.political_candidate_id = $${pcIdx})
+         ORDER BY c.canvass_date DESC
+         LIMIT 1
+    ) pc ON true`;
+
+    let listWhere = whereSql;
+    if (status === 'Visited')            listWhere += ` AND pc.canvass_id IS NOT NULL AND pc.follow_up_needed = false`;
+    else if (status === 'Not visited')   listWhere += ` AND pc.canvass_id IS NULL`;
+    else if (status === 'Follow-up needed') listWhere += ` AND pc.follow_up_needed = true`;
 
     const [voters, stats] = await Promise.all([
         many(
             `SELECT v.voter_id, v.sos_vid, v.name, v.father_husband, v.age, v.gender,
                     v.ward, v.voter_area_name, v.voter_area_code, v.address, v.status,
-                    (${hasCanvassSql}) AS has_canvass
+                    (pc.canvass_id IS NOT NULL) AS has_canvass,
+                    pc.follow_up_needed AS canvass_follow_up
                FROM voters v ${canvassJoin}
-               ${whereSql}
+               ${listWhere}
                ORDER BY (v.name = '(no name)')::int, v.name
                LIMIT $${i} OFFSET $${i + 1}`,
             [...params, limit, offset]
         ),
-        one(statsSql, params),
+        statsP,
     ]);
 
     return { voters, stats };

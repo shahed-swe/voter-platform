@@ -137,6 +137,9 @@ export default function DynamicCanvassing() {
                         setFlash(`Saved canvass for ${activeVoter.name}`);
                         setActiveVoter(null);
                         setPinnedVoter(null);
+                        // Force the voter list to refetch so the row status + counts
+                        // update immediately (no manual refresh). (#3)
+                        setListRefreshKey((k) => k + 1);
                         setTimeout(() => setFlash(null), 4000);
                     }}
                 />

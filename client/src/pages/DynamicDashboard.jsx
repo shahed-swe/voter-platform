@@ -22,6 +22,7 @@ export default function DynamicDashboard() {
     const [pinnedVoter, setPinnedVoter]     = useState(null);
     const [activeVoter, setActiveVoter]     = useState(null);
     const [flash, setFlash]                 = useState(null);
+    const [listRefreshKey, setListRefreshKey] = useState(0);
 
     // Synchronous reset when candidate switches
     const [lastCandidateId, setLastCandidateId] = useState(candidate?.candidate_id);
@@ -42,20 +43,17 @@ export default function DynamicDashboard() {
         setPinnedVoter(null);
     }, [JSON.stringify(geoNavStack)]);
 
+    // Always load stats — including the initial whole-constituency view (no ward /
+    // no filter). `stats_only` skips the voter list so the constituency-wide count
+    // is fast. (#15: dashboard used to show 0 until an area was picked.)
     useEffect(() => {
-        const hasFilters = Object.values(filters).some(
-            (v) => v != null && v !== '' && !(Array.isArray(v) && v.length === 0)
-        );
-        const hasWard = Object.values(wardScope).some((v) => v != null && v !== '');
-        if (!hasFilters && !hasWard) { setStats(null); return; }
-
         let cancelled = false;
         votersApi
-            .filtered({ filters, scope: wardScope, limit: 1 })
+            .filtered({ filters, scope: wardScope, stats_only: true })
             .then((d) => !cancelled && setStats(d.stats || null))
             .catch(() => !cancelled && setStats(null));
         return () => { cancelled = true; };
-    }, [JSON.stringify(filters), JSON.stringify(wardScope), candidate?.candidate_id]);
+    }, [JSON.stringify(filters), JSON.stringify(wardScope), candidate?.candidate_id, listRefreshKey]);
 
     function handleLeafClick({ wardLabel }) {
         const scope = wardLabelToScope(wardLabel);
@@ -172,6 +170,7 @@ export default function DynamicDashboard() {
                                 filters={{}}
                                 scope={voterModal.scope}
                                 scopeLabel={voterModal.label}
+                                refreshKey={listRefreshKey}
                                 onPickVoter={(v) => {
                                     setVoterModal(null);
                                     setPinnedVoter(v);
@@ -191,6 +190,7 @@ export default function DynamicDashboard() {
                         setFlash(`Saved canvass for ${activeVoter.name}`);
                         setActiveVoter(null);
                         setPinnedVoter(null);
+                        setListRefreshKey((k) => k + 1);   // refresh list + stats (#3)
                         setTimeout(() => setFlash(null), 4000);
                     }}
                 />

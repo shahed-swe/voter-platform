@@ -26,6 +26,24 @@ function ensureCanManageUsers(req) {
     }
 }
 
+// Role hierarchy — each actor may create only roles BELOW itself (#14).
+// super-admin resolves to 'admin' via actorRole(). 'candidate' (campaign owner)
+// may create the campaign admin + everything under it.
+const CREATABLE_ROLES = {
+    candidate: ['admin', 'sub_admin', 'volunteer'],
+    admin:     ['admin', 'sub_admin', 'volunteer'],
+    sub_admin: ['volunteer'],
+};
+function ensureCanCreateRole(req, targetRole) {
+    const actor = actorRole(req);
+    const allowed = CREATABLE_ROLES[actor] || [];
+    if (!allowed.includes(targetRole)) {
+        throw new ForbiddenError(
+            `A ${actor || 'user'} cannot create a ${targetRole}.`
+        );
+    }
+}
+
 async function listUsers(req, res) {
     ensureCanManageUsers(req);
     const { role, is_active, search, limit, offset } = req.query;
@@ -48,9 +66,8 @@ async function createUser(req, res) {
     if (!['admin', 'sub_admin', 'volunteer'].includes(role)) {
         throw new ValidationError('Invalid role');
     }
-    if (actorRole(req) === 'sub_admin' && role === 'admin') {
-        throw new ForbiddenError('Sub-admins cannot create admins');
-    }
+    // Enforce the creation hierarchy — down only (#14).
+    ensureCanCreateRole(req, role);
 
     const tempPassword = generateTempPassword(12);
     const passwordHash = await hashPassword(tempPassword);
