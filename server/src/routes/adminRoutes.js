@@ -23,4 +23,23 @@ router.delete('/users/:user_id/assignments/:assignment_id', asyncHandler(c.delet
 router.get('/assignments', asyncHandler(c.listAllAssignments));
 router.post('/clear-cache', asyncHandler(cache.clear));
 
+// Test the email/SMTP config (#13). Super-admin only. Sends a test message so
+// the operator can confirm EMAIL_USER / EMAIL_PASS (Gmail app password) work.
+router.post('/test-email', requireRole('admin'), asyncHandler(async (req, res) => {
+    const emailService = require('../services/emailService');
+    const config = require('../config');
+    const to = req.body?.to || config.email.from || config.email.user;
+    if (!config.email.enabled) {
+        return res.status(400).json({ success: false, error: 'Email is disabled (set EMAIL_ENABLED=true and credentials).' });
+    }
+    if (!to) return res.status(400).json({ success: false, error: 'No recipient (pass { to } or set EMAIL_FROM).' });
+    const result = await emailService.sendMail({
+        to,
+        subject: `${config.tenant.name} — test email`,
+        html: `<p>✅ Email is configured correctly for <strong>${config.tenant.name}</strong>.</p>`,
+        text: `Email is configured correctly for ${config.tenant.name}.`,
+    });
+    res.json({ success: true, ...result, to });
+}));
+
 module.exports = router;

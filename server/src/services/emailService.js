@@ -86,7 +86,7 @@ async function sendWelcomeEmail({ to, name, role, username, tempPassword, addres
             username,
             tempPassword,
             address,
-            loginUrl: `${config.tenant.publicUrl}/login.html`,
+            loginUrl: `${config.tenant.publicUrl}/login`,
         }),
     });
 }
@@ -102,7 +102,7 @@ async function sendAssignmentEmail({ to, userName, assignmentType, assignmentVal
             assignmentValue,
             areaDetails,
             supervisorInfo,
-            loginUrl: `${config.tenant.publicUrl}/login.html`,
+            loginUrl: `${config.tenant.publicUrl}/login`,
         }),
     });
 }
