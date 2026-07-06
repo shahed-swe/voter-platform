@@ -12,7 +12,7 @@ const SUPPORT_LEVELS = [
     { value: 'Strong oppose',    label: 'দৃঢ় বিরোধিতা',       color: 'text-red-700' },
 ];
 
-function emptyForm(voterId) {
+function emptyForm(voterId, building) {
     return {
         voter_id: voterId,
         support_level: 'Undecided',
@@ -26,12 +26,15 @@ function emptyForm(voterId) {
         household_size: '',
         follow_up_needed: false,
         follow_up_date: '',
-        latitude: '',
-        longitude: '',
+        // Pre-fill the building's geolocation so the canvass — and the voter's
+        // location next time — attach to this building (#4, #6).
+        latitude: building?.latitude ?? '',
+        longitude: building?.longitude ?? '',
         location_verified: false,
         floor_number: '',
         flat_number: '',
-        building_name: '',
+        building_feature_id: building?.building_id ?? null,
+        building_name: building?.building_name ?? '',
         address: '',
     };
 }
@@ -39,8 +42,8 @@ function emptyForm(voterId) {
 const BN_DIGITS = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
 const toBn = (s) => String(s ?? '').replace(/[0-9]/g, (d) => BN_DIGITS[+d]);
 
-export default function CanvassFormModal({ voter, onClose, onSubmitted }) {
-    const [form, setForm]   = useState(() => emptyForm(voter.voter_id));
+export default function CanvassFormModal({ voter, building, onClose, onSubmitted }) {
+    const [form, setForm]   = useState(() => emptyForm(voter.voter_id, building));
     const [busy, setBusy]   = useState(false);
     const [error, setError] = useState(null);
 

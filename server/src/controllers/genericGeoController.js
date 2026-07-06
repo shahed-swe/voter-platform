@@ -20,7 +20,8 @@ async function geoLayerByParent(req, res) {
         await geoLayer.fetchLayerByParent(
             tenant(req),
             req.params.layer_key,
-            req.params.parent_feature_id
+            req.params.parent_feature_id,
+            { withCanvass: true, politicalCandidateId: req.user?.political_candidate_id || null }
         )
     );
 }

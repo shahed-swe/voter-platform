@@ -63,6 +63,18 @@ function styleFor(layerSpec, feature) {
     const p = feature.properties;
     const base = layerSpec.style || {};
 
+    // Canvassed buildings are highlighted green regardless of the layer's
+    // configured color_by (#6). `canvassed` is set by the backend building fetch.
+    if (p.canvassed) {
+        return {
+            fillColor:   '#2E7D32',
+            color:       '#1B5E20',
+            weight:      base.weight ?? 1,
+            opacity:     base.opacity ?? 1,
+            fillOpacity: base.fillOpacity ?? 0.75,
+        };
+    }
+
     if (layerSpec.color_by === 'bucket') {
         const palette = layerSpec.bucket_palette ||
             ['#E8F5E9', '#A5D6A7', '#66BB6A', '#2E7D32', '#1B5E20'];
@@ -271,6 +283,13 @@ export default function DynamicMap({
     // the visible building cluster rather than at the ward's bounding-box centre.
     const pinnedWardCenter = useMemo(() => {
         if (!pinnedVoter) return null;
+        // #4 — if this voter was already canvassed at a building, pin them at that
+        // exact building location rather than the ward's bounding-box centre.
+        const clat = Number(pinnedVoter.canvass_latitude);
+        const clng = Number(pinnedVoter.canvass_longitude);
+        if (Number.isFinite(clat) && Number.isFinite(clng) && (clat !== 0 || clng !== 0)) {
+            return [clat, clng];
+        }
         // Walk from deepest (village, index 2) up to ward (index 1)
         for (let depth = Math.min(drillStack.length - 1, layersSpec.length - 2); depth >= 1; depth--) {
             const entry = drillStack[depth];
@@ -302,7 +321,24 @@ export default function DynamicMap({
             // Leaf layer (building) — fire parent callback with the ward context from drillStack
             // drillStack = [{constituency}, {ward}, {village}]; ward is index 1
             const wardLabel = drillStack[1]?.label || null;
-            onLeafClick?.({ wardLabel, feature: feature.properties });
+            // Capture the building's id + centroid so the canvass can be tagged to
+            // this building and reuse its geolocation for the voter (#4, #6).
+            let center = null;
+            try {
+                const c = L.geoJSON(feature).getBounds().getCenter();
+                center = [c.lat, c.lng];
+            } catch { /* no geometry */ }
+            const p = feature.properties || {};
+            onLeafClick?.({
+                wardLabel,
+                feature: p,
+                building: {
+                    building_id:   p.feature_id ?? null,
+                    building_name: p.name ?? p.building_name ?? null,
+                    latitude:      center?.[0] ?? p.latitude ?? null,
+                    longitude:     center?.[1] ?? p.longitude ?? null,
+                },
+            });
             return;
         }
         // Default: drill
@@ -387,7 +423,10 @@ export default function DynamicMap({
                             }}
                             onEachFeature={(f, layer) => {
                                 if (spec.label_from && f.properties[spec.label_from] != null) {
-                                    layer.bindTooltip(String(f.properties[spec.label_from]), { sticky: true });
+                                    const cc = f.properties.canvass_count;
+                                    const lbl = String(f.properties[spec.label_from])
+                                        + (cc > 0 ? ` — ${cc} canvassed` : '');
+                                    layer.bindTooltip(lbl, { sticky: true });
                                 }
                                 if (isDeepest) {
                                     layer.on('click', () => onFeatureClick(spec, f));

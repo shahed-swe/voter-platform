@@ -12,9 +12,9 @@ Reported issues from the field review.
 | 1 | Voter table → open canvassing form directly | Canvassing | ✅ |
 | 2 | Mobile responsiveness | UI | ☐ |
 | 3 | Voter row status not updating instantly after submit | Canvassing | ✅ |
-| 4 | Per-voter building geolocation on canvass | Geo / Map | ☐ |
+| 4 | Per-voter building geolocation on canvass | Geo / Map | ✅ |
 | 5 | Analytics daily trend + top villages empty | Analytics | ✅ |
-| 6 | Highlight canvassed buildings + per-building stats | Dashboard / Map | ☐ |
+| 6 | Highlight canvassed buildings + per-building stats | Dashboard / Map | ✅ |
 | 7 | Logo links (BSAR / CN) missing | UI | ✅ |
 | 8 | Canvasser geolocation marker missing | Geo / Map | ✅ |
 | 9 | "poridorshito" count zero + status head filter broken | Voter table | ✅ |

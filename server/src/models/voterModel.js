@@ -298,7 +298,7 @@ async function findByFilters(candidateId, { filters = {}, specs = [], status, se
     // canvass; the tab filters on it. The list is always scope-limited (a ward/area),
     // so the LATERAL runs over a small set.
     const canvassJoin = `LEFT JOIN LATERAL (
-        SELECT c.canvass_id, c.follow_up_needed
+        SELECT c.canvass_id, c.follow_up_needed, c.latitude, c.longitude
           FROM canvassing c
          WHERE c.voter_id = v.voter_id
            AND c.candidate_id = $1
@@ -317,7 +317,9 @@ async function findByFilters(candidateId, { filters = {}, specs = [], status, se
             `SELECT v.voter_id, v.sos_vid, v.name, v.father_husband, v.age, v.gender,
                     v.ward, v.voter_area_name, v.voter_area_code, v.address, v.status,
                     (pc.canvass_id IS NOT NULL) AS has_canvass,
-                    pc.follow_up_needed AS canvass_follow_up
+                    pc.follow_up_needed AS canvass_follow_up,
+                    pc.latitude  AS canvass_latitude,
+                    pc.longitude AS canvass_longitude
                FROM voters v ${canvassJoin}
                ${listWhere}
                ORDER BY (v.name = '(no name)')::int, v.name

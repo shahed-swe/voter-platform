@@ -20,6 +20,7 @@ export default function DynamicCanvassing() {
     const [pinnedVoter, setPinnedVoter]     = useState(null);
     const [flash, setFlash]                 = useState(null);
     const [buildingScope, setBuildingScope] = useState(null);
+    const [buildingCtx, setBuildingCtx]     = useState(null); // clicked building (id + centroid) for canvass tagging
     const [listRefreshKey, setListRefreshKey] = useState(0);
 
     // Synchronous reset when candidate switches
@@ -43,12 +44,13 @@ export default function DynamicCanvassing() {
         setPinnedVoter(null);
     }, [JSON.stringify(geoNavStack), buildingScope]);
 
-    function handleLeafClick({ wardLabel }) {
+    function handleLeafClick({ wardLabel, building }) {
         const s = wardLabelToScope(wardLabel);
         if (s) {
             setBuildingScope(s);
             setListRefreshKey((k) => k + 1);
         }
+        setBuildingCtx(building || null);
     }
 
     const scopeLabel =
@@ -132,6 +134,7 @@ export default function DynamicCanvassing() {
             {activeVoter && (
                 <CanvassFormModal
                     voter={activeVoter}
+                    building={buildingCtx}
                     onClose={() => setActiveVoter(null)}
                     onSubmitted={() => {
                         setFlash(`Saved canvass for ${activeVoter.name}`);

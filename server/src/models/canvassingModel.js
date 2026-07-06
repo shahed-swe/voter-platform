@@ -105,7 +105,8 @@ async function submit(candidateId, { voterId, userId, politicalCandidateId, payl
                 follow_up_needed, follow_up_date,
                 latitude, longitude, location_verified,
                 support_rating, is_undecided, source, voter_member_count, is_minority,
-                floor_number, flat_number, building_name, address, building_id
+                floor_number, flat_number, building_name, address, building_id,
+                building_feature_id
             ) VALUES (
                 $1, $2,
                 $3, $4, $5, $6, $7,
@@ -113,7 +114,8 @@ async function submit(candidateId, { voterId, userId, politicalCandidateId, payl
                 $11, $12,
                 $13, $14, $15,
                 $16, $17, $18, $19, $20,
-                $21, $22, $23, $24, $25
+                $21, $22, $23, $24, $25,
+                $26
             )
             RETURNING *`,
             [
@@ -127,7 +129,11 @@ async function submit(candidateId, { voterId, userId, politicalCandidateId, payl
                 payload.support_rating || null, !!payload.is_undecided,
                 payload.source || 'Primary', payload.voter_member_count || null, !!payload.is_minority,
                 payload.floor_number || null, payload.flat_number || null,
-                payload.building_name || null, payload.address || null, payload.building_id || null,
+                payload.building_name || null, payload.address || null,
+                // Legacy numeric building_id only if it's actually numeric; the geo
+                // building link goes in building_feature_id (TEXT).
+                (payload.building_id != null && /^\d+$/.test(String(payload.building_id))) ? payload.building_id : null,
+                payload.building_feature_id || null,
             ]
         );
 
