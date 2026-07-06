@@ -112,7 +112,16 @@ export default function AppHeader() {
     const navigate = useNavigate();
     const { pathname } = useLocation();
     const [mobileOpen, setMobileOpen] = useState(false);
+    const [mobileTop, setMobileTop]   = useState(64);
+    const headerRef = useRef(null);
     useEffect(() => { setMobileOpen(false); }, [pathname]);
+
+    function toggleMobile() {
+        if (!mobileOpen && headerRef.current) {
+            setMobileTop(headerRef.current.getBoundingClientRect().bottom);
+        }
+        setMobileOpen((o) => !o);
+    }
 
     const initials = (user?.name || 'A')
         .split(/\s+/)
@@ -135,7 +144,7 @@ export default function AppHeader() {
     ];
 
     return (
-        <header className="relative bg-white border-b border-gray-200 px-3 md:px-6 py-3 flex items-center gap-3 md:gap-4 shadow-sm">
+        <header ref={headerRef} className="relative bg-white border-b border-gray-200 px-3 md:px-6 py-3 flex items-center gap-3 md:gap-4 shadow-sm">
             {/* Brand — clicking the logos returns to the dashboard (#7) */}
             <NavLink to="/dashboard" className="flex items-center gap-2 md:gap-3 flex-shrink-0" title="Dashboard">
                 <img src="/assets/images/BSARL.png" alt="BSAR" className="h-8 w-8 md:h-9 md:w-9 object-contain" />
@@ -198,7 +207,7 @@ export default function AppHeader() {
                 </button>
                 {/* Hamburger — mobile only */}
                 <button
-                    onClick={() => setMobileOpen((o) => !o)}
+                    onClick={toggleMobile}
                     className="lg:hidden inline-flex items-center justify-center h-9 w-9 rounded-md border border-brand/30 text-brand"
                     aria-label="Menu"
                 >
@@ -206,25 +215,34 @@ export default function AppHeader() {
                 </button>
             </div>
 
-            {/* Mobile menu panel */}
-            {mobileOpen && (
-                <div className="lg:hidden absolute top-full left-0 right-0 bg-white border-b border-gray-200 shadow-lg z-[1200] p-3 grid grid-cols-2 gap-2">
-                    {mobileItems.map((i) => (
-                        <NavLink
-                            key={i.to}
-                            to={i.to}
-                            end={i.to === '/admin'}
-                            className={({ isActive }) =>
-                                `flex items-center gap-2 px-3 py-2.5 rounded-md text-sm font-medium border ${
-                                    isActive ? 'bg-brand text-white border-brand' : 'bg-white text-brand border-brand/40'
-                                }`
-                            }
-                        >
-                            <i className={`fas ${i.icon} w-4 text-center`} />
-                            {i.label}
-                        </NavLink>
-                    ))}
-                </div>
+            {/* Mobile menu — portalled to <body> with fixed positioning so it sits
+                above the Leaflet map's stacking context (which otherwise hides it). */}
+            {mobileOpen && createPortal(
+                <>
+                    <div className="lg:hidden fixed inset-0 z-[9998]" onClick={() => setMobileOpen(false)} />
+                    <div
+                        className="lg:hidden fixed left-0 right-0 bg-white border-b border-gray-200 shadow-xl z-[9999] p-3 grid grid-cols-2 gap-2"
+                        style={{ top: mobileTop }}
+                    >
+                        {mobileItems.map((i) => (
+                            <NavLink
+                                key={i.to}
+                                to={i.to}
+                                end={i.to === '/admin'}
+                                onClick={() => setMobileOpen(false)}
+                                className={({ isActive }) =>
+                                    `flex items-center gap-2 px-3 py-2.5 rounded-md text-sm font-medium border ${
+                                        isActive ? 'bg-brand text-white border-brand' : 'bg-white text-brand border-brand/40'
+                                    }`
+                                }
+                            >
+                                <i className={`fas ${i.icon} w-4 text-center`} />
+                                {i.label}
+                            </NavLink>
+                        ))}
+                    </div>
+                </>,
+                document.body
             )}
         </header>
     );
