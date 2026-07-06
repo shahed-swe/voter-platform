@@ -23,6 +23,7 @@ export default function DynamicDashboard() {
     const [activeVoter, setActiveVoter]     = useState(null);
     const [flash, setFlash]                 = useState(null);
     const [listRefreshKey, setListRefreshKey] = useState(0);
+    const [mobileNav, setMobileNav]         = useState(false); // mobile-only left panel toggle
 
     // Synchronous reset when candidate switches
     const [lastCandidateId, setLastCandidateId] = useState(candidate?.candidate_id);
@@ -93,7 +94,7 @@ export default function DynamicDashboard() {
 
             {/* Left: geo navigator + voter filters */}
             {hasLeftPanel && (
-                <aside className="absolute left-4 top-4 bottom-4 w-[280px] z-[500] overflow-y-auto pr-1 space-y-3">
+                <aside className={`absolute left-2 md:left-4 top-4 bottom-16 lg:bottom-4 w-[min(88vw,300px)] z-[500] overflow-y-auto pr-1 space-y-3 ${mobileNav ? 'block' : 'hidden'} lg:block`}>
                     {mapLayers.length > 0 && (
                         <GeoNavigator
                             key={candidate?.candidate_id}
@@ -114,8 +115,18 @@ export default function DynamicDashboard() {
                 </aside>
             )}
 
+            {/* Mobile toggle for the nav/filters panel */}
+            {hasLeftPanel && (
+                <button
+                    onClick={() => setMobileNav((v) => !v)}
+                    className="lg:hidden absolute bottom-3 left-1/2 -translate-x-1/2 z-[550] bn text-sm font-medium px-4 py-2 rounded-full bg-white shadow-lg border border-brand/30 text-brand"
+                >
+                    <i className={`fas fa-${mobileNav ? 'map' : 'layer-group'} mr-1`} /> {mobileNav ? 'Map' : 'এলাকা / ফিল্টার'}
+                </button>
+            )}
+
             {/* Right: scoped stats */}
-            <aside className="absolute right-4 top-4 w-[230px] z-[400] space-y-3">
+            <aside className="absolute right-2 md:right-4 top-4 w-[min(42vw,230px)] z-[400] space-y-2 md:space-y-3">
                 <div className="bg-white border border-brand/30 rounded-lg px-4 py-2 shadow-sm">
                     <div className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Scope</div>
                     <div className="text-sm font-medium text-gray-800 truncate" title={scopeLabel}>

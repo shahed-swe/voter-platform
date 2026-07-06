@@ -110,6 +110,9 @@ function AdminDropdown() {
 export default function AppHeader() {
     const { user, logout } = useAuth();
     const navigate = useNavigate();
+    const { pathname } = useLocation();
+    const [mobileOpen, setMobileOpen] = useState(false);
+    useEffect(() => { setMobileOpen(false); }, [pathname]);
 
     const initials = (user?.name || 'A')
         .split(/\s+/)
@@ -122,17 +125,24 @@ export default function AppHeader() {
     const showAdmin      = !!user?.is_super_admin;
     const showVolunteers = user?.role === 'candidate';
 
+    // Nav items shown in the mobile menu (main + role-specific).
+    const mobileItems = [
+        ...MAIN_NAV,
+        ...(showAdmin ? ADMIN_DROPDOWN : []),
+        ...(showVolunteers ? CANDIDATE_NAV : []),
+    ];
+
     return (
-        <header className="bg-white border-b border-gray-200 px-4 md:px-6 py-3 flex items-center gap-4 shadow-sm">
+        <header className="relative bg-white border-b border-gray-200 px-3 md:px-6 py-3 flex items-center gap-3 md:gap-4 shadow-sm">
             {/* Brand — clicking the logos returns to the dashboard (#7) */}
-            <NavLink to="/dashboard" className="flex items-center gap-3 flex-shrink-0" title="Dashboard">
-                <img src="/assets/images/BSARL.png" alt="BSAR" className="h-9 w-9 object-contain" />
-                <span className="text-sm text-gray-500 italic hidden md:inline">an initiative of</span>
-                <img src="/assets/images/centristnation.png" alt="Centrist Nation" className="h-9 w-9 object-contain" />
+            <NavLink to="/dashboard" className="flex items-center gap-2 md:gap-3 flex-shrink-0" title="Dashboard">
+                <img src="/assets/images/BSARL.png" alt="BSAR" className="h-8 w-8 md:h-9 md:w-9 object-contain" />
+                <span className="text-sm text-gray-500 italic hidden lg:inline">an initiative of</span>
+                <img src="/assets/images/centristnation.png" alt="Centrist Nation" className="h-8 w-8 md:h-9 md:w-9 object-contain" />
             </NavLink>
 
-            {/* Nav */}
-            <nav className="flex-1 flex items-center justify-center gap-2">
+            {/* Desktop nav — hidden on small screens */}
+            <nav className="hidden lg:flex flex-1 items-center justify-center gap-2">
                 {MAIN_NAV.map((i) => (
                     <NavLink
                         key={i.to}
@@ -158,16 +168,19 @@ export default function AppHeader() {
                 ))}
             </nav>
 
+            {/* pushes the right cluster to the edge on mobile (where nav is hidden) */}
+            <div className="flex-1 lg:hidden" />
+
             {/* Right */}
-            <div className="flex items-center gap-3 flex-shrink-0">
+            <div className="flex items-center gap-2 md:gap-3 flex-shrink-0">
                 <VolunteerCandidateSwitcher />
                 <CandidateSwitcher />
                 <div className="flex items-center gap-2">
-                    <div className="h-9 w-9 rounded-full bg-brand text-white flex items-center justify-center font-semibold text-sm">
+                    <div className="h-9 w-9 rounded-full bg-brand text-white flex items-center justify-center font-semibold text-sm flex-shrink-0">
                         {initials}
                     </div>
                     <div className="leading-tight hidden sm:block">
-                        <div className="text-sm font-medium text-gray-800">{user?.name || 'User'}</div>
+                        <div className="text-sm font-medium text-gray-800 max-w-[120px] truncate">{user?.name || 'User'}</div>
                         <div className="text-xs text-gray-500 capitalize">
                             {user?.is_super_admin ? 'Super Admin' : (user?.role || '').replace('_', ' ')}
                         </div>
@@ -175,12 +188,42 @@ export default function AppHeader() {
                 </div>
                 <button
                     onClick={() => { logout(); navigate('/login', { replace: true }); }}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium bg-red-500 text-white hover:bg-red-600"
+                    className="inline-flex items-center gap-2 px-2.5 md:px-3 py-2 rounded-md text-sm font-medium bg-red-500 text-white hover:bg-red-600"
+                    title="Logout"
                 >
                     <i className="fas fa-arrow-right-from-bracket" />
-                    Logout
+                    <span className="hidden md:inline">Logout</span>
+                </button>
+                {/* Hamburger — mobile only */}
+                <button
+                    onClick={() => setMobileOpen((o) => !o)}
+                    className="lg:hidden inline-flex items-center justify-center h-9 w-9 rounded-md border border-brand/30 text-brand"
+                    aria-label="Menu"
+                >
+                    <i className={`fas fa-${mobileOpen ? 'xmark' : 'bars'}`} />
                 </button>
             </div>
+
+            {/* Mobile menu panel */}
+            {mobileOpen && (
+                <div className="lg:hidden absolute top-full left-0 right-0 bg-white border-b border-gray-200 shadow-lg z-[1200] p-3 grid grid-cols-2 gap-2">
+                    {mobileItems.map((i) => (
+                        <NavLink
+                            key={i.to}
+                            to={i.to}
+                            end={i.to === '/admin'}
+                            className={({ isActive }) =>
+                                `flex items-center gap-2 px-3 py-2.5 rounded-md text-sm font-medium border ${
+                                    isActive ? 'bg-brand text-white border-brand' : 'bg-white text-brand border-brand/40'
+                                }`
+                            }
+                        >
+                            <i className={`fas ${i.icon} w-4 text-center`} />
+                            {i.label}
+                        </NavLink>
+                    ))}
+                </div>
+            )}
         </header>
     );
 }

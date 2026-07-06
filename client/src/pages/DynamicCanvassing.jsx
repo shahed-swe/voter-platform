@@ -22,6 +22,7 @@ export default function DynamicCanvassing() {
     const [buildingScope, setBuildingScope] = useState(null);
     const [buildingCtx, setBuildingCtx]     = useState(null); // clicked building (id + centroid) for canvass tagging
     const [listRefreshKey, setListRefreshKey] = useState(0);
+    const [mobilePanel, setMobilePanel]     = useState(null); // null | 'nav' | 'list' — mobile-only panel toggle
 
     // Synchronous reset when candidate switches
     const [lastCandidateId, setLastCandidateId] = useState(candidate?.candidate_id);
@@ -84,7 +85,7 @@ export default function DynamicCanvassing() {
 
             {/* Left: geo navigator + voter filters */}
             {hasLeftPanel && (
-                <aside className="absolute left-4 top-4 bottom-4 w-[280px] z-[500] overflow-y-auto pr-1 space-y-3">
+                <aside className={`absolute left-2 md:left-4 top-4 bottom-16 lg:bottom-4 w-[min(88vw,300px)] z-[500] overflow-y-auto pr-1 space-y-3 ${mobilePanel === 'nav' ? 'block' : 'hidden'} lg:block`}>
                     {mapLayers.length > 0 && (
                         <GeoNavigator
                             key={candidate?.candidate_id}
@@ -106,7 +107,7 @@ export default function DynamicCanvassing() {
             )}
 
             {/* Right: voter list */}
-            <aside className="absolute right-4 top-4 bottom-4 w-[380px] z-[500]">
+            <aside className={`absolute right-2 md:right-4 top-4 bottom-16 lg:bottom-4 w-[min(94vw,380px)] z-[500] ${mobilePanel === 'list' ? 'block' : 'hidden'} lg:block`}>
                 <FilteredVoterListPanel
                     filters={filters}
                     scope={geoScope}
@@ -115,6 +116,32 @@ export default function DynamicCanvassing() {
                     onPickVoter={(v) => { setPinnedVoter(v); setActiveVoter(v); }}
                 />
             </aside>
+
+            {/* Mobile panel toggle bar (lg:hidden) */}
+            <div className="lg:hidden absolute bottom-3 left-1/2 -translate-x-1/2 z-[550] flex gap-2 bg-white rounded-full shadow-lg border border-gray-200 p-1">
+                {hasLeftPanel && (
+                    <button
+                        onClick={() => setMobilePanel((p) => (p === 'nav' ? null : 'nav'))}
+                        className={`bn text-sm font-medium px-4 py-1.5 rounded-full ${mobilePanel === 'nav' ? 'bg-brand text-white' : 'text-brand'}`}
+                    >
+                        <i className="fas fa-layer-group mr-1" /> এলাকা
+                    </button>
+                )}
+                <button
+                    onClick={() => setMobilePanel((p) => (p === 'list' ? null : 'list'))}
+                    className={`bn text-sm font-medium px-4 py-1.5 rounded-full ${mobilePanel === 'list' ? 'bg-brand text-white' : 'text-brand'}`}
+                >
+                    <i className="fas fa-users mr-1" /> ভোটার
+                </button>
+                {mobilePanel && (
+                    <button
+                        onClick={() => setMobilePanel(null)}
+                        className="text-gray-500 px-3 py-1.5 rounded-full"
+                    >
+                        <i className="fas fa-map" /> Map
+                    </button>
+                )}
+            </div>
 
             {/* Pinned voter indicator */}
             {pinnedVoter && !activeVoter && (

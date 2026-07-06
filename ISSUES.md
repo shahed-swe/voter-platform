@@ -10,7 +10,7 @@ Reported issues from the field review.
 | # | Issue | Area | Status |
 |---|-------|------|--------|
 | 1 | Voter table → open canvassing form directly | Canvassing | ✅ |
-| 2 | Mobile responsiveness | UI | ☐ |
+| 2 | Mobile responsiveness | UI | ✅ |
 | 3 | Voter row status not updating instantly after submit | Canvassing | ✅ |
 | 4 | Per-voter building geolocation on canvass | Geo / Map | ✅ |
 | 5 | Analytics daily trend + top villages empty | Analytics | ✅ |
