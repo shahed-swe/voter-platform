@@ -14,6 +14,7 @@ import CreateCandidatePage from './pages/admin/CreateCandidatePage.jsx';
 import ImportDataPage from './pages/admin/ImportDataPage.jsx';
 import PoliticalCandidatesPage from './pages/admin/PoliticalCandidatesPage.jsx';
 import VolunteerManagementPage from './pages/candidate/VolunteerManagementPage.jsx';
+import ManagementPage from './pages/admin/ManagementPage.jsx';
 import NotFoundPage from './pages/NotFoundPage.jsx';
 
 export default function App() {
@@ -82,6 +83,15 @@ export default function App() {
                     element={
                         <ProtectedRoute roles={['candidate', 'admin']}>
                             <VolunteerManagementPage />
+                        </ProtectedRoute>
+                    }
+                />
+                {/* Unified hierarchy management (#12) — candidate → admin → sub_admin → volunteer */}
+                <Route
+                    path="/management"
+                    element={
+                        <ProtectedRoute roles={['candidate', 'admin', 'sub_admin']}>
+                            <ManagementPage />
                         </ProtectedRoute>
                     }
                 />

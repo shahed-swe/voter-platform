@@ -18,15 +18,15 @@ const MAIN_NAV = [
 ];
 
 const ADMIN_DROPDOWN = [
-    { to: '/admin',                      label: 'User Management', icon: 'fa-users-cog' },
+    { to: '/management',                 label: 'Team Management', icon: 'fa-sitemap' },
     { to: '/admin/candidates',           label: 'Constituencies',  icon: 'fa-map-location-dot' },
     { to: '/admin/political-candidates', label: 'Candidates',      icon: 'fa-user-tie' },
-    { to: '/volunteers',                 label: 'Volunteers',      icon: 'fa-users' },
     { to: '/admin/import',               label: 'Import Data',     icon: 'fa-database' },
 ];
 
-const CANDIDATE_NAV = [
-    { to: '/volunteers', label: 'Volunteers', icon: 'fa-users' },
+// Team management for the mid-hierarchy manager roles (candidate → admin → sub_admin).
+const MANAGER_NAV = [
+    { to: '/management', label: 'Team', icon: 'fa-sitemap' },
 ];
 
 function AdminDropdown() {
@@ -122,14 +122,16 @@ export default function AppHeader() {
         .join('')
         .toUpperCase();
 
-    const showAdmin      = !!user?.is_super_admin;
-    const showVolunteers = user?.role === 'candidate';
+    const showAdmin   = !!user?.is_super_admin;
+    // Candidate / campaign-admin / sub-admin get the Team management link (not super-admins,
+    // who reach it via the Admin dropdown).
+    const showManager = !user?.is_super_admin && ['candidate', 'admin', 'sub_admin'].includes(user?.role);
 
     // Nav items shown in the mobile menu (main + role-specific).
     const mobileItems = [
         ...MAIN_NAV,
         ...(showAdmin ? ADMIN_DROPDOWN : []),
-        ...(showVolunteers ? CANDIDATE_NAV : []),
+        ...(showManager ? MANAGER_NAV : []),
     ];
 
     return (
@@ -156,7 +158,7 @@ export default function AppHeader() {
 
                 {showAdmin && <AdminDropdown />}
 
-                {showVolunteers && CANDIDATE_NAV.map((i) => (
+                {showManager && MANAGER_NAV.map((i) => (
                     <NavLink
                         key={i.to}
                         to={i.to}

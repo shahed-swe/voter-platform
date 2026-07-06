@@ -1,0 +1,287 @@
+import { useEffect, useState, useCallback } from 'react';
+import * as mgmt from '../../api/management.js';
+import { useAuth } from '../../auth/AuthContext.jsx';
+import { LoadingState, ErrorState, EmptyState, Spinner } from '../../components/LoadingState.jsx';
+
+const INPUT = 'w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand focus:border-brand';
+const BTN_PRIMARY = 'inline-flex items-center gap-2 bg-brand text-white text-sm font-medium px-4 py-2 rounded-md hover:bg-brand/90 disabled:opacity-50';
+const BTN_SECONDARY = 'inline-flex items-center gap-2 border border-gray-300 text-gray-700 text-sm font-medium px-3 py-1.5 rounded-md hover:bg-gray-50';
+
+const ROLE_LABEL = {
+    candidate: 'Candidate', admin: 'Campaign Admin', sub_admin: 'Sub-admin', volunteer: 'Volunteer',
+};
+const ROLE_BADGE = {
+    candidate: 'bg-purple-100 text-purple-700',
+    admin:     'bg-blue-100 text-blue-700',
+    sub_admin: 'bg-amber-100 text-amber-700',
+    volunteer: 'bg-green-100 text-green-700',
+};
+
+// ── Multi-select chips (wards / voter areas) ────────────────────────────────────
+function MultiSelect({ label, options, value, onChange, loading, placeholder }) {
+    const [open, setOpen] = useState(false);
+    const toggle = (o) => onChange(value.includes(o) ? value.filter((x) => x !== o) : [...value, o]);
+    return (
+        <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
+            <div className="border border-gray-300 rounded-md">
+                <button type="button" className="w-full text-left px-3 py-2 text-sm flex justify-between items-center"
+                        onClick={() => setOpen((o) => !o)} disabled={loading}>
+                    <span className={value.length ? 'text-gray-800' : 'text-gray-400'}>
+                        {loading ? 'লোড হচ্ছে...' : value.length ? `${value.length} নির্বাচিত` : (placeholder || 'নির্বাচন করুন')}
+                    </span>
+                    <i className={`fas fa-chevron-${open ? 'up' : 'down'} text-xs text-gray-400`} />
+                </button>
+                {open && !loading && (
+                    <div className="max-h-48 overflow-y-auto border-t border-gray-100">
+                        {options.length === 0 ? (
+                            <div className="px-3 py-2 text-xs text-gray-400">কিছু পাওয়া যায়নি।</div>
+                        ) : options.map((o) => (
+                            <button key={o} type="button" onClick={() => toggle(o)}
+                                    className="w-full text-left px-3 py-1.5 text-sm hover:bg-brand/5 flex items-center gap-2 bn">
+                                <i className={`fas ${value.includes(o) ? 'fa-check-square text-brand' : 'fa-square text-gray-300'}`} />
+                                {o}
+                            </button>
+                        ))}
+                    </div>
+                )}
+            </div>
+            {value.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1.5">
+                    {value.map((v) => (
+                        <span key={v} className="bn text-xs bg-brand/10 text-brand px-2 py-0.5 rounded-full flex items-center gap-1">
+                            {v}
+                            <button type="button" onClick={() => toggle(v)} className="hover:text-red-500"><i className="fas fa-times text-[10px]" /></button>
+                        </span>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ── Create-user modal ───────────────────────────────────────────────────────────
+function CreateUserModal({ ctx, onClose, onCreated }) {
+    const [form, setForm] = useState({
+        role: ctx.creatable_roles[0] || 'volunteer',
+        name: '', username: '', password: '', email: '', phone: '',
+        constituency_id: ctx.constituencies[0]?.candidate_id || '',
+        political_candidate_id: '',
+    });
+    const [wardOpts, setWardOpts]   = useState([]);
+    const [areaOpts, setAreaOpts]   = useState([]);
+    const [wards, setWards]         = useState([]);
+    const [areas, setAreas]         = useState([]);
+    const [candidates, setCandidates] = useState([]); // political candidates (for super-admin picking the campaign)
+    const [loadingW, setLoadingW]   = useState(false);
+    const [loadingA, setLoadingA]   = useState(false);
+    const [busy, setBusy]           = useState(false);
+    const [error, setError]         = useState(null);
+    const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+    const needsWard = form.role === 'sub_admin' || form.role === 'volunteer';
+    const needsArea = form.role === 'volunteer';
+    const superPicksCampaign = ctx.role === 'super_admin' && form.role !== 'candidate';
+
+    // Load wards when constituency changes (for sub_admin/volunteer).
+    useEffect(() => {
+        if (!needsWard || !form.constituency_id) { setWardOpts([]); return; }
+        setLoadingW(true);
+        mgmt.wards(form.constituency_id)
+            .then((r) => setWardOpts(r.wards || []))
+            .catch(() => setWardOpts([]))
+            .finally(() => setLoadingW(false));
+    }, [form.constituency_id, needsWard]);
+
+    // Load voter areas when wards change (for volunteer).
+    useEffect(() => {
+        if (!needsArea || !form.constituency_id || wards.length === 0) { setAreaOpts([]); return; }
+        setLoadingA(true);
+        mgmt.voterAreas(form.constituency_id, wards)
+            .then((r) => setAreaOpts(r.voter_areas || []))
+            .catch(() => setAreaOpts([]))
+            .finally(() => setLoadingA(false));
+    }, [form.constituency_id, JSON.stringify(wards), needsArea]);
+
+    // Super-admin needs to pick which campaign (political candidate) a non-candidate belongs to.
+    useEffect(() => {
+        if (!superPicksCampaign) return;
+        import('../../api/people.js').then((people) =>
+            people.listCandidates().then((r) => setCandidates(r.candidates || [])).catch(() => {}));
+    }, [superPicksCampaign]);
+
+    async function submit(e) {
+        e.preventDefault();
+        setBusy(true); setError(null);
+        try {
+            await mgmt.createUser({
+                role: form.role,
+                name: form.name, username: form.username, password: form.password,
+                email: form.email || undefined, phone: form.phone || undefined,
+                constituency_id: form.constituency_id,
+                political_candidate_id: superPicksCampaign ? (form.political_candidate_id || undefined) : undefined,
+                wards: needsWard ? wards : undefined,
+                voter_areas: needsArea ? areas : undefined,
+            });
+            onCreated();
+        } catch (err) {
+            setError(err.response?.data?.error || err.message);
+        } finally { setBusy(false); }
+    }
+
+    return (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+            <form className="bg-white rounded-xl shadow-2xl max-w-lg w-full max-h-[92vh] overflow-y-auto" onSubmit={submit}>
+                <div className="px-5 py-4 border-b border-gray-100 flex justify-between items-center sticky top-0 bg-white">
+                    <h3 className="font-semibold text-gray-800">নতুন User তৈরি করুন</h3>
+                    <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600"><i className="fas fa-times" /></button>
+                </div>
+                <div className="p-5 space-y-3">
+                    {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded p-2">{error}</div>}
+
+                    <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Role *</label>
+                        <select className={INPUT} value={form.role} onChange={set('role')}>
+                            {ctx.creatable_roles.map((r) => <option key={r} value={r}>{ROLE_LABEL[r] || r}</option>)}
+                        </select>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                        <div>
+                            <label className="block text-xs font-medium text-gray-600 mb-1">পূর্ণ নাম *</label>
+                            <input className={INPUT} required value={form.name} onChange={set('name')} />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Phone</label>
+                            <input className={INPUT} value={form.phone} onChange={set('phone')} placeholder="+88017..." />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Username *</label>
+                            <input className={INPUT} required value={form.username} onChange={set('username')} />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Password *</label>
+                            <input className={INPUT} required type="password" value={form.password} onChange={set('password')} />
+                        </div>
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Constituency *</label>
+                        <select className={INPUT} value={form.constituency_id} onChange={set('constituency_id')} required>
+                            {ctx.constituencies.map((c) => (
+                                <option key={c.candidate_id} value={c.candidate_id}>{c.name} — {c.constituency}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    {superPicksCampaign && (
+                        <div>
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Campaign (কোন candidate-এর অধীনে) *</label>
+                            <select className={INPUT} value={form.political_candidate_id} onChange={set('political_candidate_id')} required>
+                                <option value="">Candidate নির্বাচন করুন</option>
+                                {candidates.map((c) => <option key={c.user_id} value={c.user_id}>{c.name} (@{c.username})</option>)}
+                            </select>
+                        </div>
+                    )}
+
+                    {needsWard && (
+                        <MultiSelect label={`Ward assign করুন${form.role === 'sub_admin' ? ' *' : ''}`}
+                                     options={wardOpts} value={wards} onChange={setWards} loading={loadingW} />
+                    )}
+                    {needsArea && (
+                        <MultiSelect label="Voter area assign করুন *" options={areaOpts} value={areas}
+                                     onChange={setAreas} loading={loadingA} placeholder="আগে ward নির্বাচন করুন" />
+                    )}
+                </div>
+                <div className="border-t border-gray-100 px-5 py-3 sticky bottom-0 bg-white flex justify-end gap-2">
+                    <button type="button" className={BTN_SECONDARY} onClick={onClose}>বাতিল</button>
+                    <button type="submit" className={BTN_PRIMARY} disabled={busy}>
+                        {busy ? <Spinner size="sm" /> : <i className="fas fa-user-plus" />} তৈরি করুন
+                    </button>
+                </div>
+            </form>
+        </div>
+    );
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
+export default function ManagementPage() {
+    const { user } = useAuth();
+    const [ctx, setCtx]         = useState(null);
+    const [users, setUsers]     = useState(null);
+    const [error, setError]     = useState(null);
+    const [showCreate, setShowCreate] = useState(false);
+
+    const reload = useCallback(() => {
+        Promise.all([mgmt.context(), mgmt.listUsers()])
+            .then(([c, u]) => { setCtx(c); setUsers(u.users || []); setError(null); })
+            .catch(setError);
+    }, []);
+
+    useEffect(() => { reload(); }, [reload]);
+
+    async function handleDelete(u) {
+        if (!confirm(`"${u.name}" (@${u.username}) কে ডিলিট করবেন?`)) return;
+        try { await mgmt.removeUser(u.user_id); reload(); }
+        catch (err) { alert(err.response?.data?.error || err.message); }
+    }
+
+    const canManage = user?.is_super_admin || ['candidate', 'admin', 'sub_admin'].includes(user?.role);
+    if (!canManage) return <div className="p-8 text-red-600">আপনার user manage করার অনুমতি নেই।</div>;
+    if (error) return <ErrorState error={error} onRetry={reload} />;
+    if (!ctx || !users) return <LoadingState />;
+
+    return (
+        <div className="p-6 max-w-4xl mx-auto space-y-5">
+            <div className="flex items-center justify-between">
+                <div>
+                    <h1 className="text-xl font-bold text-gray-900">Team Management</h1>
+                    <p className="text-sm text-gray-500 mt-0.5">
+                        আপনার অধীনস্থ user তৈরি ও এলাকা assign করুন
+                    </p>
+                </div>
+                {ctx.creatable_roles.length > 0 && (
+                    <button className={BTN_PRIMARY} onClick={() => setShowCreate(true)}>
+                        <i className="fas fa-user-plus" /> নতুন User
+                    </button>
+                )}
+            </div>
+
+            {users.length === 0 ? (
+                <EmptyState icon="fa-users" label="এখনো কোনো user নেই। উপরের বাটন থেকে যোগ করুন।" />
+            ) : (
+                <div className="space-y-2">
+                    {users.map((u) => (
+                        <div key={`${u.user_id}-${u.candidate_id}`} className="bg-white border border-gray-200 rounded-lg px-4 py-3 flex items-center gap-3">
+                            <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                    <span className="font-medium text-gray-900">{u.name}</span>
+                                    <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${ROLE_BADGE[u.role] || 'bg-gray-100 text-gray-600'}`}>
+                                        {ROLE_LABEL[u.role] || u.role}
+                                    </span>
+                                </div>
+                                <div className="text-xs text-gray-500 mt-0.5">
+                                    @{u.username} · {u.constituency_name}
+                                    {u.allowed_wards?.length ? <span className="bn"> · ওয়ার্ড {u.allowed_wards.join(', ')}</span> : null}
+                                    {u.allowed_voter_areas?.length ? <span className="bn"> · {u.allowed_voter_areas.length} area</span> : null}
+                                </div>
+                            </div>
+                            <button
+                                className="text-xs border border-red-200 text-red-600 px-2 py-1.5 rounded-md hover:bg-red-50"
+                                onClick={() => handleDelete(u)}
+                                title="Delete"
+                            >
+                                <i className="fas fa-trash" />
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {showCreate && (
+                <CreateUserModal ctx={ctx} onClose={() => setShowCreate(false)}
+                                 onCreated={() => { setShowCreate(false); reload(); }} />
+            )}
+        </div>
+    );
+}

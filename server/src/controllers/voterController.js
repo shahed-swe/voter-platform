@@ -106,6 +106,17 @@ async function filtered(req, res) {
         }
     }
 
+    // Finer voter-area restriction (volunteers assigned specific voter areas — #12).
+    const allowedAreas = req.user?.allowed_voter_areas;
+    if (allowedAreas?.length) {
+        if (safeScope.voter_area && !allowedAreas.includes(safeScope.voter_area)) {
+            throw new ForbiddenError('Voter area not in your allowed areas');
+        }
+        if (!safeScope.voter_area) {
+            safeScope.voter_area = allowedAreas.length === 1 ? allowedAreas[0] : allowedAreas;
+        }
+    }
+
     // Merge: scope is broader context, filters are user refinements
     const merged = { ...safeScope, ...filters };
 

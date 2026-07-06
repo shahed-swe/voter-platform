@@ -31,6 +31,7 @@ async function buildTokenPayload(user, { forceCandidate, forcePoliticalCandidate
     // Volunteers see only their allowed wards; political candidates see everything
     // in their constituency but are scoped by their own user_id.
     const allowedWards = activeGrant?.allowed_wards || null;
+    const allowedVoterAreas = activeGrant?.allowed_voter_areas || null;
     const politicalCandidateId = activeGrant?.political_candidate_id
         // If role is 'candidate', they ARE the political candidate
         || (activeGrant?.role === 'candidate' ? user.user_id : null)
@@ -50,12 +51,14 @@ async function buildTokenPayload(user, { forceCandidate, forcePoliticalCandidate
             constituency_name:     g.name,
             role:                  g.role,
             allowed_wards:         g.allowed_wards || null,
+            allowed_voter_areas:   g.allowed_voter_areas || null,
             political_candidate_id: g.political_candidate_id || null,
             political_candidate_name: g.political_candidate_name || null,
         })),
         active_candidate:      activeCandidate,
         active_political_candidate_id: politicalCandidateId,
         allowed_wards:         allowedWards,
+        allowed_voter_areas:   allowedVoterAreas,
         political_candidate_id: politicalCandidateId,
     };
 }
@@ -93,6 +96,7 @@ async function login(req, res) {
             is_super_admin: payload.is_super_admin,
             password_changed: user.password_changed,
             allowed_wards: payload.allowed_wards,
+            allowed_voter_areas: payload.allowed_voter_areas,
             political_candidate_id: payload.political_candidate_id,
         },
         candidates: payload.candidates,
@@ -119,6 +123,7 @@ async function me(req, res) {
             ...user,
             is_super_admin: !!req.user.is_super_admin,
             allowed_wards: req.user.allowed_wards || null,
+            allowed_voter_areas: req.user.allowed_voter_areas || null,
             political_candidate_id: req.user.political_candidate_id || null,
         },
         candidates: req.user.candidates || [],

@@ -13,6 +13,9 @@ router.use('/candidates', verifyToken, require('./candidateRoutes'));
 // People management: political candidates + volunteers (cross-candidate, no scope needed).
 router.use('/people', require('./peopleRoutes'));
 
+// Unified hierarchy management (candidate → admin → sub-admin → volunteer). #12
+router.use('/management', require('./managementRoutes'));
+
 // Everything else requires authentication AND a candidate scope (set on req.candidateId).
 router.use(verifyToken, scopeToCandidate);
 
