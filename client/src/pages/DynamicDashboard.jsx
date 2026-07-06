@@ -174,6 +174,7 @@ export default function DynamicDashboard() {
                                 onPickVoter={(v) => {
                                     setVoterModal(null);
                                     setPinnedVoter(v);
+                                    setActiveVoter(v);   // open the canvass form directly (#1)
                                 }}
                             />
                         </div>

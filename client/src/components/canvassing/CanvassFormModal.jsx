@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import * as canvassingApi from '../../api/canvassing.js';
+import * as votersApi from '../../api/voters.js';
 import { Spinner } from '../LoadingState.jsx';
 
 const SUPPORT_LEVELS = [
@@ -42,6 +43,38 @@ export default function CanvassFormModal({ voter, onClose, onSubmitted }) {
     const [busy, setBusy]   = useState(false);
     const [error, setError] = useState(null);
 
+    // #10 — family members: additional voters at the same location that this one
+    // canvass should also cover (same household). The main voter is always included.
+    const [family, setFamily]   = useState([]);
+    const [q, setQ]             = useState('');
+    const [results, setResults] = useState([]);
+    const [searching, setSearching] = useState(false);
+
+    useEffect(() => {
+        if (q.trim().length < 2) { setResults([]); return; }
+        let cancelled = false;
+        setSearching(true);
+        const id = setTimeout(() => {
+            votersApi
+                .filtered({
+                    scope: voter.ward ? { ward: voter.ward } : {},
+                    search: q.trim(),
+                    limit: 8,
+                })
+                .then((d) => {
+                    if (cancelled) return;
+                    const excluded = new Set([voter.voter_id, ...family.map((f) => f.voter_id)]);
+                    setResults((d.voters || []).filter((v) => !excluded.has(v.voter_id)));
+                })
+                .catch(() => !cancelled && setResults([]))
+                .finally(() => !cancelled && setSearching(false));
+        }, 350);
+        return () => { cancelled = true; clearTimeout(id); };
+    }, [q, voter.ward, voter.voter_id, family]);
+
+    const addMember = (v) => { setFamily((f) => [...f, v]); setQ(''); setResults([]); };
+    const removeMember = (id) => setFamily((f) => f.filter((v) => v.voter_id !== id));
+
     const update = (k) => (e) =>
         setForm((f) => ({
             ...f,
@@ -69,15 +102,21 @@ export default function CanvassFormModal({ voter, onClose, onSubmitted }) {
         e.preventDefault();
         setBusy(true);
         setError(null);
+        const shared = {
+            ...form,
+            support_rating: form.support_rating ? Number(form.support_rating) : null,
+            voter_member_count: form.voter_member_count ? Number(form.voter_member_count) : null,
+            household_size: form.household_size ? Number(form.household_size) : null,
+            latitude: form.latitude ? Number(form.latitude) : null,
+            longitude: form.longitude ? Number(form.longitude) : null,
+        };
+        // Submit a canvass for the main voter + each added family member, sharing the
+        // same answers/location but each tagged to its own voter. (#10)
+        const targets = [voter, ...family];
         try {
-            await canvassingApi.submit({
-                ...form,
-                support_rating: form.support_rating ? Number(form.support_rating) : null,
-                voter_member_count: form.voter_member_count ? Number(form.voter_member_count) : null,
-                household_size: form.household_size ? Number(form.household_size) : null,
-                latitude: form.latitude ? Number(form.latitude) : null,
-                longitude: form.longitude ? Number(form.longitude) : null,
-            });
+            for (const t of targets) {
+                await canvassingApi.submit({ ...shared, voter_id: t.voter_id });
+            }
             onSubmitted();
         } catch (err) {
             setError(err.response?.data?.error || err.message);
@@ -191,6 +230,53 @@ export default function CanvassFormModal({ voter, onClose, onSubmitted }) {
                         </div>
                     </div>
 
+                    {/* #10 — family members at the same location */}
+                    <fieldset className="border border-gray-200 rounded-md p-3">
+                        <legend className="text-xs font-medium text-gray-600 px-1 bn">
+                            পরিবারের সদস্য (একই বাড়ির অন্য ভোটার)
+                        </legend>
+                        <div className="relative mt-1">
+                            <input
+                                className="input-field bn w-full"
+                                placeholder="নাম বা VID দিয়ে খুঁজে যোগ করুন..."
+                                value={q}
+                                onChange={(e) => setQ(e.target.value)}
+                            />
+                            {(results.length > 0 || searching) && (
+                                <div className="absolute z-20 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-52 overflow-y-auto">
+                                    {searching && <div className="px-3 py-2 text-xs text-gray-400 bn">খুঁজছি...</div>}
+                                    {results.map((v) => (
+                                        <button
+                                            key={v.voter_id}
+                                            type="button"
+                                            onClick={() => addMember(v)}
+                                            className="w-full text-left px-3 py-2 hover:bg-brand/5 flex items-center gap-2 text-sm bn"
+                                        >
+                                            <i className="fas fa-user-plus text-brand/60" />
+                                            <span className="font-medium truncate">{v.name}</span>
+                                            <span className="text-gray-400 text-xs">VID {toBn(v.sos_vid)}</span>
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                        {family.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 mt-2">
+                                {family.map((v) => (
+                                    <span key={v.voter_id} className="flex items-center gap-1 bg-brand/10 text-brand text-xs px-2 py-1 rounded-full bn">
+                                        {v.name}
+                                        <button type="button" onClick={() => removeMember(v.voter_id)} className="ml-0.5 hover:text-red-500">
+                                            <i className="fas fa-times text-[10px]" />
+                                        </button>
+                                    </span>
+                                ))}
+                            </div>
+                        )}
+                        <p className="text-[11px] text-gray-400 mt-1.5 bn">
+                            যোগ করলে এই জরিপ {toBn(family.length + 1)} জন ভোটারের জন্য সংরক্ষিত হবে।
+                        </p>
+                    </fieldset>
+
                     <fieldset className="border border-gray-200 rounded-md p-3">
                         <legend className="text-xs font-medium text-gray-600 px-1 bn">
                             ঠিকানা (শহুরে ক্যানভাসিংয়ের জন্য)
@@ -233,7 +319,9 @@ export default function CanvassFormModal({ voter, onClose, onSubmitted }) {
                     <button type="button" className="btn-secondary" onClick={onClose}>বাতিল</button>
                     <button type="submit" className="btn-primary" disabled={busy}>
                         {busy ? <Spinner size="sm" /> : <i className="fas fa-check" />}
-                        <span className="bn">সংরক্ষণ করুন</span>
+                        <span className="bn">
+                            সংরক্ষণ করুন{family.length > 0 ? ` (${toBn(family.length + 1)} জন)` : ''}
+                        </span>
                     </button>
                 </div>
             </form>

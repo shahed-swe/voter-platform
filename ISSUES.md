@@ -9,7 +9,7 @@ Reported issues from the field review.
 
 | # | Issue | Area | Status |
 |---|-------|------|--------|
-| 1 | Voter table → open canvassing form directly | Canvassing | ☐ |
+| 1 | Voter table → open canvassing form directly | Canvassing | ✅ |
 | 2 | Mobile responsiveness | UI | ☐ |
 | 3 | Voter row status not updating instantly after submit | Canvassing | ✅ |
 | 4 | Per-voter building geolocation on canvass | Geo / Map | ☐ |
@@ -18,7 +18,7 @@ Reported issues from the field review.
 | 7 | Logo links (BSAR / CN) missing | UI | ☐ |
 | 8 | Canvasser geolocation marker missing | Geo / Map | ☐ |
 | 9 | "poridorshito" count zero + status head filter broken | Voter table | ✅ |
-| 10 | Multiple voter (family) search & add in canvass form | Canvassing | ☐ |
+| 10 | Multiple voter (family) search & add in canvass form | Canvassing | ✅ |
 | 11 | Bangla transliteration (Avro phonetic) search | Voter table | ☐ |
 | 12 | Role-based region assignment (hierarchy) | Roles / Access | ☐ |
 | 13 | Email sending (SMTP / Google app password) | Infra | ☐ |

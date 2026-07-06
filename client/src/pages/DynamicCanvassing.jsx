@@ -110,7 +110,7 @@ export default function DynamicCanvassing() {
                     scope={geoScope}
                     scopeLabel={scopeLabel}
                     refreshKey={listRefreshKey}
-                    onPickVoter={(v) => setPinnedVoter(v)}
+                    onPickVoter={(v) => { setPinnedVoter(v); setActiveVoter(v); }}
                 />
             </aside>
 
