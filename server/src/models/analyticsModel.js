@@ -66,20 +66,38 @@ async function demographics(candidateId) {
 }
 
 async function villagePerformance(candidateId, { limit = 50, politicalCandidateId = null } = {}) {
-    // "visited" = voters in the village with ≥1 canvass by this political candidate.
+    // "Top villages/areas" grouped by voter_area_name — the area concept present in
+    // the voter data. (The dedicated `villages` table is empty for wizard-onboarded
+    // constituencies like DhakaSouth, whose geography lives in geo_layers.)
+    // "visited" = voters in the area with ≥1 canvass by this political candidate.
+    // Ordered by canvassing activity so the most-worked areas surface first.
+    // Split so the per-area totals use the (candidate_id, voter_area_name) index
+    // (no join → index scan) and the visited count only touches the tiny canvassing
+    // table — instead of a GROUP BY + join over every voter.
     return many(
-        `SELECT vil.village_id, vil.village_name, vil.total_population,
-                COUNT(DISTINCT v.voter_id) AS total_voters,
-                COUNT(DISTINCT c.voter_id) AS visited,
-                ROUND(100.0 * COUNT(DISTINCT c.voter_id) /
-                      NULLIF(COUNT(DISTINCT v.voter_id), 0), 2) AS completion_pct
-           FROM villages vil
-           LEFT JOIN voters v ON v.village_id = vil.village_id AND v.candidate_id = $1
-           LEFT JOIN canvassing c ON c.voter_id = v.voter_id AND c.candidate_id = $1
+        `WITH totals AS (
+             SELECT voter_area_name, COUNT(*)::int AS total_voters
+               FROM voters
+              WHERE candidate_id = $1
+                AND voter_area_name IS NOT NULL AND voter_area_name <> ''
+              GROUP BY voter_area_name
+         ),
+         visited AS (
+             SELECT v.voter_area_name, COUNT(DISTINCT c.voter_id)::int AS visited
+               FROM canvassing c
+               JOIN voters v ON v.voter_id = c.voter_id
+              WHERE c.candidate_id = $1
                 AND ($3::bigint IS NULL OR c.political_candidate_id = $3)
-          WHERE vil.candidate_id = $1
-          GROUP BY vil.candidate_id, vil.village_id
-          ORDER BY completion_pct DESC NULLS LAST
+              GROUP BY v.voter_area_name
+         )
+         SELECT t.voter_area_name AS village_id,
+                t.voter_area_name AS village_name,
+                t.total_voters,
+                COALESCE(vi.visited, 0) AS visited,
+                ROUND(100.0 * COALESCE(vi.visited, 0) / NULLIF(t.total_voters, 0), 2) AS completion_pct
+           FROM totals t
+           LEFT JOIN visited vi ON vi.voter_area_name = t.voter_area_name
+          ORDER BY visited DESC, total_voters DESC
           LIMIT $2`,
         [candidateId, limit, politicalCandidateId]
     );
