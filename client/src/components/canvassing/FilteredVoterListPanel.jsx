@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import VoterCard from './VoterCard.jsx';
 import * as votersApi from '../../api/voters.js';
+import { voterSearchTerms } from '../../utils/avroPhonetic.js';
 import { LoadingState, EmptyState, ErrorState } from '../LoadingState.jsx';
 
 const BN_DIGITS = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
@@ -65,11 +66,13 @@ export default function FilteredVoterListPanel({ filters, scope, scopeLabel, onP
             setFetchSpec(null);
             return;
         }
+        const terms = voterSearchTerms(dQuery);
         setFetchSpec({
             filters: filters || {},
             scope:   scope   || {},
             status:  status  || undefined,
-            search:  dQuery  || undefined,
+            search:  terms.search,
+            search_bn: terms.search_bn,
             offset:  0,
             replace: true,
         });
@@ -85,12 +88,13 @@ export default function FilteredVoterListPanel({ filters, scope, scopeLabel, onP
         else                   { setLoadingMore(true); }
 
         votersApi.filtered({
-            filters: fetchSpec.filters,
-            scope:   fetchSpec.scope,
-            status:  fetchSpec.status,
-            search:  fetchSpec.search,
-            limit:   PAGE_SIZE,
-            offset:  fetchSpec.offset,
+            filters:   fetchSpec.filters,
+            scope:     fetchSpec.scope,
+            status:    fetchSpec.status,
+            search:    fetchSpec.search,
+            search_bn: fetchSpec.search_bn,
+            limit:     PAGE_SIZE,
+            offset:    fetchSpec.offset,
         })
             .then((res) => {
                 if (cancelled) return;
@@ -115,11 +119,13 @@ export default function FilteredVoterListPanel({ filters, scope, scopeLabel, onP
         if (!sentinel || !hasMore || loading || loadingMore) return;
 
         // Snapshot current values so the observer callback is never stale
+        const terms = voterSearchTerms(dQuery);
         const snap = {
             filters: filters || {},
             scope:   scope   || {},
             status:  status  || undefined,
-            search:  dQuery  || undefined,
+            search:  terms.search,
+            search_bn: terms.search_bn,
             offset:  voters.length,
         };
 
@@ -161,16 +167,21 @@ export default function FilteredVoterListPanel({ filters, scope, scopeLabel, onP
                 </h3>
             </div>
 
-            {/* Search */}
+            {/* Search — English typing is transliterated to Bangla (Avro) */}
             <div className="px-4 pb-3">
                 <input
                     type="text"
                     className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm bn placeholder-gray-400 focus:border-brand focus:ring-1 focus:ring-brand outline-none"
-                    placeholder="ভোটার অনুসন্ধান করুন..."
+                    placeholder="ভোটার খুঁজুন (English/বাংলা)..."
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     disabled={!hasScope}
                 />
+                {voterSearchTerms(query).search_bn && (
+                    <div className="mt-1 text-xs text-gray-500 bn">
+                        খুঁজছি: <span className="font-medium text-brand">{voterSearchTerms(query).search_bn}</span>
+                    </div>
+                )}
             </div>
 
             {/* Stats strip */}

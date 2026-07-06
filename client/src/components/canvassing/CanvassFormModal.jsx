@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import * as canvassingApi from '../../api/canvassing.js';
 import * as votersApi from '../../api/voters.js';
+import { voterSearchTerms } from '../../utils/avroPhonetic.js';
 import { Spinner } from '../LoadingState.jsx';
 
 const SUPPORT_LEVELS = [
@@ -58,7 +59,7 @@ export default function CanvassFormModal({ voter, onClose, onSubmitted }) {
             votersApi
                 .filtered({
                     scope: voter.ward ? { ward: voter.ward } : {},
-                    search: q.trim(),
+                    ...voterSearchTerms(q),
                     limit: 8,
                 })
                 .then((d) => {

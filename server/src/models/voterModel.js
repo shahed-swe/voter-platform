@@ -196,7 +196,7 @@ const FILTERS = {
     ward:       { via: 'voters',    col: 'ward' },          // dhaka13 voters store ward_number
 };
 
-async function findByFilters(candidateId, { filters = {}, specs = [], status, search, limit = 500, offset = 0, politicalCandidateId = null, statsOnly = false } = {}) {
+async function findByFilters(candidateId, { filters = {}, specs = [], status, search, searchBn = null, limit = 500, offset = 0, politicalCandidateId = null, statsOnly = false } = {}) {
     const where  = ['v.candidate_id = $1'];
     const params = [candidateId];
     let i = 2;
@@ -239,10 +239,21 @@ async function findByFilters(candidateId, { filters = {}, specs = [], status, se
         i = params.length + 1;
     }
 
-    // Search is a scope filter (applies to both list + stats).
-    if (search) {
-        params.push(`%${search}%`);
-        where.push(`(v.name ILIKE $${params.length} OR v.sos_vid ILIKE $${params.length} OR v.address ILIKE $${params.length})`);
+    // Search is a scope filter (applies to both list + stats). `searchBn` is the
+    // Avro-phonetic transliteration of a Latin query — matched against the Bangla
+    // name so a canvasser can type English and find Bangla voters (#11).
+    if (search || searchBn) {
+        const parts = [];
+        if (search) {
+            params.push(`%${search}%`);
+            const s = params.length;
+            parts.push(`v.name ILIKE $${s} OR v.sos_vid ILIKE $${s} OR v.address ILIKE $${s}`);
+        }
+        if (searchBn) {
+            params.push(`%${searchBn}%`);
+            parts.push(`v.name ILIKE $${params.length}`);
+        }
+        where.push(`(${parts.join(' OR ')})`);
     }
 
     const whereSql = `WHERE ${where.join(' AND ')}`;
