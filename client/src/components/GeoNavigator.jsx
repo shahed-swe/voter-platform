@@ -37,24 +37,20 @@ export default function GeoNavigator({ candidateId, value, onChange }) {
         return () => { cancelled = true; };
     }, [candidateId]);
 
-    // Load voter-area options. With wards chosen we scope areas to them; with no
-    // ward we list ALL areas so a user can pick an area directly and let the map
-    // focus its ward. (Each area carries its `ward`.)
+    // Load voter-area options whenever the selected wards change.
     useEffect(() => {
         let cancelled = false;
+        if (wards.length === 0) { setAreaOpts([]); return; }
         setLoadingA(true);
         votersApi.geoOptions(wards)
             .then((r) => {
                 if (cancelled) return;
                 const opts = (r.voter_areas || []).map((a) => ({ value: a.value, label: a.value, count: a.count }));
                 setAreaOpts(opts);
-                // Only prune selected areas when a ward filter is active (an empty
-                // ward filter already lists every area, so nothing to prune).
-                if (wards.length) {
-                    const valid = new Set(opts.map((o) => o.value));
-                    const keep = areas.filter((a) => valid.has(a));
-                    if (keep.length !== areas.length) onChange({ ward: wards, voter_area: keep });
-                }
+                // Drop any selected areas that are no longer available.
+                const valid = new Set(opts.map((o) => o.value));
+                const keep = areas.filter((a) => valid.has(a));
+                if (keep.length !== areas.length) onChange({ ward: wards, voter_area: keep });
             })
             .catch(() => { if (!cancelled) setAreaOpts([]); })
             .finally(() => { if (!cancelled) setLoadingA(false); });
@@ -103,7 +99,8 @@ export default function GeoNavigator({ candidateId, value, onChange }) {
                         value={areas}
                         onChange={setAreas}
                         loading={loadingA}
-                        placeholder={wards.length === 0 ? 'যেকোনো এলাকা বেছে নিন' : 'সব এলাকা'}
+                        disabled={wards.length === 0}
+                        placeholder={wards.length === 0 ? 'আগে ওয়ার্ড নির্বাচন করুন' : 'সব এলাকা'}
                         bn
                     />
                 </div>
