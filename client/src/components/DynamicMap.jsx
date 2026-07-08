@@ -122,28 +122,49 @@ function FitTo({ features }) {
     return null;
 }
 
-// Fit the map to a set of selected wards (multi-select nav). Fetches the ward
-// layer once and zooms to the matching ward polygons.
-function FitToWards({ focusWards, wardLayer }) {
+// Highlight the selected wards (multi-select nav) in green and fit the map to
+// them — like the old dhaka13/panchagarh behaviour. Clicking a highlighted ward
+// narrows the selection to just that ward.
+function WardHighlight({ focusWards, wardLayer, onWardClick }) {
     const map = useMap();
+    const [feats, setFeats] = useState(null);
+
     useEffect(() => {
-        if (!focusWards?.length || !wardLayer) return;
+        if (!focusWards?.length || !wardLayer) { setFeats(null); return; }
         let cancelled = false;
         layersApi.fetchSource(wardLayer.source).then((fc) => {
             if (cancelled) return;
-            const feats = (fc.features || []).filter((f) => {
+            const matched = (fc.features || []).filter((f) => {
                 const scope = wardLabelToScope(f.properties?.[wardLayer.label_from || 'name']);
                 return scope?.ward && focusWards.includes(scope.ward);
             });
-            if (!feats.length) return;
-            try {
-                const b = L.geoJSON({ type: 'FeatureCollection', features: feats }).getBounds();
-                if (b.isValid()) map.fitBounds(b, { padding: [30, 30] });
-            } catch { /* ignore */ }
+            setFeats(matched);
+            if (matched.length) {
+                try {
+                    const b = L.geoJSON({ type: 'FeatureCollection', features: matched }).getBounds();
+                    if (b.isValid()) map.fitBounds(b, { padding: [30, 30] });
+                } catch { /* ignore */ }
+            }
         }).catch(() => {});
         return () => { cancelled = true; };
     }, [JSON.stringify(focusWards), wardLayer?.source]); // eslint-disable-line react-hooks/exhaustive-deps
-    return null;
+
+    if (!feats?.length) return null;
+    return (
+        <GeoJSON
+            key={`wh-${focusWards.join(',')}`}
+            data={{ type: 'FeatureCollection', features: feats }}
+            style={{ color: '#1B5E20', weight: 2.5, fillColor: '#2E7D32', fillOpacity: 0.45 }}
+            onEachFeature={(f, layer) => {
+                const label = f.properties?.[wardLayer.label_from || 'name'];
+                if (label) layer.bindTooltip(String(label), { sticky: true });
+                layer.on('click', () => {
+                    const scope = wardLabelToScope(label);
+                    if (scope?.ward) onWardClick?.(scope.ward);
+                });
+            }}
+        />
+    );
 }
 
 // ----- Drill-state machine -------------------------------------------------
@@ -166,7 +187,8 @@ export default function DynamicMap({
     pinnedVoter,         // optional: voter object to show as a map pin at the ward centre
     onPinnedVoterClick,  // optional: () => void — fired when the voter pin is clicked
     allowedWards,        // optional: string[] (Bengali digits) — restrict the ward layer to these wards only
-    focusWards,          // optional: string[] (Bengali digits) — fit/zoom the map to these wards
+    focusWards,          // optional: string[] (Bengali digits) — highlight + fit the map to these wards
+    onWardClick,         // optional: (wardValue) => void — clicking a highlighted ward
 }) {
     const allLayers = Array.isArray(config?.layers) ? config.layers : [];
     // Drill layers form the click-to-drill hierarchy; overlay layers are
@@ -515,7 +537,7 @@ export default function DynamicMap({
                 )}
 
                 <FitTo features={deepestData?.features} />
-                <FitToWards focusWards={focusWards} wardLayer={layersSpec[1]} />
+                <WardHighlight focusWards={focusWards} wardLayer={layersSpec[1]} onWardClick={onWardClick} />
             </MapContainer>
 
             {/* Breadcrumb of drill state — only when NOT externally controlled

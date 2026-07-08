@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 /**
  * Reusable searchable multi-select dropdown with chips.
@@ -18,13 +19,29 @@ export default function MultiSelect({
 }) {
     const [open, setOpen]     = useState(false);
     const [search, setSearch] = useState('');
-    const ref = useRef(null);
+    const [pos, setPos]       = useState({ top: 0, left: 0, width: 0 });
+    const ref     = useRef(null);
+    const menuRef = useRef(null);
 
+    // The dropdown panel is portalled to <body> (fixed position) so it is never
+    // clipped by a scrolling parent or hidden behind the map's stacking context.
     useEffect(() => {
-        function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+        function onDoc(e) {
+            if ((ref.current && ref.current.contains(e.target)) ||
+                (menuRef.current && menuRef.current.contains(e.target))) return;
+            setOpen(false);
+        }
         document.addEventListener('mousedown', onDoc);
         return () => document.removeEventListener('mousedown', onDoc);
     }, []);
+
+    function openMenu() {
+        if (ref.current) {
+            const r = ref.current.getBoundingClientRect();
+            setPos({ top: r.bottom + 4, left: r.left, width: r.width });
+        }
+        setOpen((o) => !o);
+    }
 
     const showSearch = searchable ?? options.length > 8;
     const filtered = search
@@ -43,7 +60,7 @@ export default function MultiSelect({
             <button
                 type="button"
                 className={`w-full border border-gray-300 rounded-md bg-white text-left flex items-center justify-between ${pad} ${disabled ? 'opacity-60' : ''}`}
-                onClick={() => !disabled && setOpen((o) => !o)}
+                onClick={() => !disabled && openMenu()}
                 disabled={disabled || loading}
             >
                 <span className={`${value.length ? 'text-gray-800' : 'text-gray-400'} ${bn ? 'bn' : ''} truncate`}>
@@ -52,8 +69,12 @@ export default function MultiSelect({
                 <i className={`fas fa-chevron-${open ? 'up' : 'down'} text-xs text-gray-400 ml-1`} />
             </button>
 
-            {open && !loading && (
-                <div className="absolute z-[700] mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg">
+            {open && !loading && createPortal(
+                <div
+                    ref={menuRef}
+                    className="bg-white border border-gray-200 rounded-md shadow-xl"
+                    style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width, zIndex: 99999 }}
+                >
                     {showSearch && (
                         <div className="p-1.5 border-b border-gray-100">
                             <input
@@ -96,7 +117,8 @@ export default function MultiSelect({
                             );
                         })}
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
 
             {value.length > 0 && (

@@ -94,6 +94,7 @@ export default function DynamicDashboard() {
                 onPinnedVoterClick={(v) => setActiveVoter(v)}
                 allowedWards={allowedWards}
                 focusWards={navScope.ward}
+                onWardClick={(w) => setNavScope({ ward: [w], voter_area: [] })}
             />
 
             {/* Left: geo navigator + voter filters */}
