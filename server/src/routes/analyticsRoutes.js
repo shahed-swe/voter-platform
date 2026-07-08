@@ -12,6 +12,8 @@ router.get('/village-performance', asyncHandler(c.villagePerformance));
 router.get('/canvasser-performance', asyncHandler(c.canvasserPerformance));
 router.get('/daily-trends', asyncHandler(c.dailyTrends));
 router.get('/issues', asyncHandler(c.issues));
+router.get('/income-distribution', asyncHandler(c.incomeDistribution));
 router.get('/canvassing-records', asyncHandler(c.canvassingRecords));
+router.get('/canvassers', asyncHandler(c.canvasserOptions));
 
 module.exports = router;
