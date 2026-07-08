@@ -290,25 +290,17 @@ export default function DynamicMap({
         prevFocusKey.current = key;
     }, [JSON.stringify(focusWards), dataByLayer, layersSpec.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Restrict the ward layer: to the volunteer's allowed wards AND, when a nav
-    // selection is active, to the selected wards — so the map is constrained to
-    // the selection (non-selected wards aren't shown or clickable). One integrated
-    // system: selection drives what the map renders + drills into.
+    // Restrict the ward layer to the volunteer's allowed wards only. We do NOT
+    // hide non-selected wards — every ward stays visible + clickable so the user
+    // can freely switch between wards. Selected wards are highlighted instead
+    // (see the ward layer style below).
     function restrictWards(spec, data) {
         if (spec?.id !== 'ward' || !data?.features) return data;
-        let features = data.features;
-        if (allowedWards?.length) {
-            features = features.filter((f) => {
-                const scope = wardLabelToScope(f.properties?.[spec.label_from || 'name']);
-                return !scope?.ward || allowedWards.includes(scope.ward);
-            });
-        }
-        if (focusWards?.length) {
-            features = features.filter((f) => {
-                const scope = wardLabelToScope(f.properties?.[spec.label_from || 'name']);
-                return scope?.ward && focusWards.includes(scope.ward);
-            });
-        }
+        if (!allowedWards?.length) return data;
+        const features = data.features.filter((f) => {
+            const scope = wardLabelToScope(f.properties?.[spec.label_from || 'name']);
+            return !scope?.ward || allowedWards.includes(scope.ward);
+        });
         return { ...data, features };
     }
 
@@ -452,7 +444,7 @@ export default function DynamicMap({
                     const isDeepest = i === visibleCount - 1;
                     return (
                         <GeoJSON
-                            key={`${spec.id}-${i === 0 ? 'root' : drillStack[i - 1]?.id}-${data.features.length}`}
+                            key={`${spec.id}-${i === 0 ? 'root' : drillStack[i - 1]?.id}-${data.features.length}${spec.id === 'ward' ? `-sel${(focusWards || []).join(',')}` : ''}`}
                             data={data}
                             // Some layers mix polygons with Point features (e.g. a
                             // handful of point-only buildings). Render points as styled
@@ -468,6 +460,15 @@ export default function DynamicMap({
                             }}
                             style={(f) => {
                                 const s = styleFor(spec, f);
+                                // Highlight wards that are in the nav selection (green),
+                                // so the user can see what's selected without hiding the
+                                // other wards they may want to switch to.
+                                if (spec.id === 'ward' && focusWards?.length) {
+                                    const w = wardLabelToScope(f.properties?.[spec.label_from || 'name'])?.ward;
+                                    if (w && focusWards.includes(w)) {
+                                        return { ...s, fillColor: '#2E7D32', color: '#1B5E20', weight: 2.5, fillOpacity: 0.6 };
+                                    }
+                                }
                                 return isDeepest
                                     ? s
                                     // Parent layers are kept as visual context — dim them
