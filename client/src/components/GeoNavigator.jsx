@@ -6,10 +6,10 @@ const BN = '০১২৩৪৫৬৭৮৯';
 const toBn = (s) => String(s).replace(/[0-9]/g, (d) => BN[+d]);
 
 /**
- * Multi-select map navigation: pick one or more WARDS and (within them) one or
- * more VOTER AREAS. The selection drives the voter list + stats (arrays) and the
- * map fits to the chosen wards. Volunteers only see their allowed wards/areas
- * (the backend filters the options).
+ * Map navigation: pick one or more WARDS (multi-select) and, within them, a
+ * single VOTER AREA (single-select — one area drills the map into its buildings).
+ * The selection drives the voter list + stats and the map. Volunteers only see
+ * their allowed wards/areas (the backend filters the options).
  *
  * Props:
  *   candidateId  — refetch options on candidate switch
@@ -92,17 +92,24 @@ export default function GeoNavigator({ candidateId, value, onChange }) {
 
                 <div>
                     <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
-                        Voter Area / Village
+                        Voter Area / Village <span className="text-gray-400 normal-case">(একটি)</span>
                     </label>
-                    <MultiSelect
-                        options={areaOpts}
-                        value={areas}
-                        onChange={setAreas}
-                        loading={loadingA}
-                        disabled={wards.length === 0}
-                        placeholder={wards.length === 0 ? 'আগে ওয়ার্ড নির্বাচন করুন' : 'সব এলাকা'}
-                        bn
-                    />
+                    {/* Single-select: picking one area drills the map into that area's buildings. */}
+                    <select
+                        className="w-full border border-gray-300 rounded-md px-2.5 py-2 text-sm bg-white text-gray-800 focus:outline-none focus:ring-1 focus:ring-brand focus:border-brand disabled:bg-gray-50 disabled:text-gray-400 bn"
+                        value={areas[0] || ''}
+                        onChange={(e) => setAreas(e.target.value ? [e.target.value] : [])}
+                        disabled={wards.length === 0 || loadingA}
+                    >
+                        <option value="">
+                            {wards.length === 0 ? 'আগে ওয়ার্ড নির্বাচন করুন' : loadingA ? 'লোড হচ্ছে…' : 'সব এলাকা'}
+                        </option>
+                        {areaOpts.map((o) => (
+                            <option key={o.value} value={o.value}>
+                                {o.label}{o.count ? ` (${toBn(o.count)})` : ''}
+                            </option>
+                        ))}
+                    </select>
                 </div>
 
                 {(wards.length > 0 || areas.length > 0) && (
