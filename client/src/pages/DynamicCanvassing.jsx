@@ -88,7 +88,6 @@ export default function DynamicCanvassing() {
                     onPinnedVoterClick={(v) => setActiveVoter(v)}
                     allowedWards={allowedWards}
                     focusWards={navScope.ward}
-                    onWardClick={(w) => setNavScope({ ward: [w], voter_area: [] })}
                 />
             </div>
 

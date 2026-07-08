@@ -122,56 +122,6 @@ function FitTo({ features }) {
     return null;
 }
 
-// Highlight the selected wards (multi-select nav) in green and fit the map to
-// them — like the old dhaka13/panchagarh behaviour. Clicking a highlighted ward
-// narrows the selection to just that ward.
-function WardHighlight({ focusWards, wardLayer, onWardClick }) {
-    const map = useMap();
-    const [feats, setFeats] = useState(null);
-
-    useEffect(() => {
-        if (!focusWards?.length || !wardLayer) { setFeats(null); return; }
-        let cancelled = false;
-        layersApi.fetchSource(wardLayer.source).then((fc) => {
-            if (cancelled) return;
-            const matched = (fc.features || []).filter((f) => {
-                const scope = wardLabelToScope(f.properties?.[wardLayer.label_from || 'name']);
-                return scope?.ward && focusWards.includes(scope.ward);
-            });
-            setFeats(matched);
-            if (matched.length) {
-                try {
-                    const b = L.geoJSON({ type: 'FeatureCollection', features: matched }).getBounds();
-                    if (b.isValid()) map.fitBounds(b, { padding: [30, 30] });
-                } catch { /* ignore */ }
-            }
-        }).catch(() => {});
-        return () => { cancelled = true; };
-    }, [JSON.stringify(focusWards), wardLayer?.source]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    if (!feats?.length) return null;
-    // Key off the actual rendered features (not focusWards) — focusWards changes
-    // before the async fetch resolves, so keying on it would remount with stale
-    // data and then never update. Keying on feats remounts exactly when the data
-    // changes, so each newly-selected ward highlights immediately.
-    const featKey = feats.map((f) => f.properties?.feature_id ?? f.id ?? '').join(',');
-    return (
-        <GeoJSON
-            key={`wh-${featKey}`}
-            data={{ type: 'FeatureCollection', features: feats }}
-            style={{ color: '#1B5E20', weight: 2.5, fillColor: '#2E7D32', fillOpacity: 0.45 }}
-            onEachFeature={(f, layer) => {
-                const label = f.properties?.[wardLayer.label_from || 'name'];
-                if (label) layer.bindTooltip(String(label), { sticky: true });
-                layer.on('click', () => {
-                    const scope = wardLabelToScope(label);
-                    if (scope?.ward) onWardClick?.(scope.ward);
-                });
-            }}
-        />
-    );
-}
-
 // ----- Drill-state machine -------------------------------------------------
 //
 // `drillStack` is an array, one entry per CURRENTLY DRILLED-INTO layer above
@@ -193,7 +143,6 @@ export default function DynamicMap({
     onPinnedVoterClick,  // optional: () => void — fired when the voter pin is clicked
     allowedWards,        // optional: string[] (Bengali digits) — restrict the ward layer to these wards only
     focusWards,          // optional: string[] (Bengali digits) — highlight + fit the map to these wards
-    onWardClick,         // optional: (wardValue) => void — clicking a highlighted ward
 }) {
     const allLayers = Array.isArray(config?.layers) ? config.layers : [];
     // Drill layers form the click-to-drill hierarchy; overlay layers are
@@ -309,14 +258,46 @@ export default function DynamicMap({
         return () => { cancelled = true; };
     }, [JSON.stringify(drillStack.map((s) => s.id)), candidateId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Restrict a ward layer's features to the volunteer's allowed wards.
-    // Non-ward layers and unrestricted users pass through unchanged.
+    // When the nav selection changes, drive the map's drill so the selected wards
+    // become the visible/clickable layer (skip the constituency step); clearing the
+    // selection returns to the constituency root. Only for self-drilling maps.
+    useEffect(() => {
+        if (controlledDrill !== undefined) return;
+        const root = layersSpec[0];
+        if (!root || root.id === 'ward') return; // ward is already the root — nothing to skip
+        if (focusWards?.length) {
+            if (internalDrillStack.length === 0) {
+                const feat = dataByLayer[root.id]?.features?.[0];
+                if (feat) {
+                    const idCol = guessIdCol(root);
+                    const id = feat.properties[idCol];
+                    if (id != null) setInternalDrillStack([{ id: String(id), label: feat.properties[root.label_from] }]);
+                }
+            }
+        } else if (internalDrillStack.length > 0) {
+            setInternalDrillStack([]);
+        }
+    }, [JSON.stringify(focusWards), dataByLayer, layersSpec.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Restrict the ward layer: to the volunteer's allowed wards AND, when a nav
+    // selection is active, to the selected wards — so the map is constrained to
+    // the selection (non-selected wards aren't shown or clickable). One integrated
+    // system: selection drives what the map renders + drills into.
     function restrictWards(spec, data) {
-        if (!allowedWards?.length || spec?.id !== 'ward' || !data?.features) return data;
-        const features = data.features.filter((f) => {
-            const scope = wardLabelToScope(f.properties?.[spec.label_from || 'name']);
-            return !scope?.ward || allowedWards.includes(scope.ward);
-        });
+        if (spec?.id !== 'ward' || !data?.features) return data;
+        let features = data.features;
+        if (allowedWards?.length) {
+            features = features.filter((f) => {
+                const scope = wardLabelToScope(f.properties?.[spec.label_from || 'name']);
+                return !scope?.ward || allowedWards.includes(scope.ward);
+            });
+        }
+        if (focusWards?.length) {
+            features = features.filter((f) => {
+                const scope = wardLabelToScope(f.properties?.[spec.label_from || 'name']);
+                return scope?.ward && focusWards.includes(scope.ward);
+            });
+        }
         return { ...data, features };
     }
 
@@ -542,7 +523,6 @@ export default function DynamicMap({
                 )}
 
                 <FitTo features={deepestData?.features} />
-                <WardHighlight focusWards={focusWards} wardLayer={layersSpec[1]} onWardClick={onWardClick} />
             </MapContainer>
 
             {/* Breadcrumb of drill state — only when NOT externally controlled
