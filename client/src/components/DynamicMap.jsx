@@ -356,12 +356,13 @@ export default function DynamicMap({
 
     function onFeatureClick(spec, feature) {
         const action = spec.click || 'drill';
-        // Ward polygon → toggle it in the nav selection (bidirectional with the
-        // dropdown) rather than drilling deeper. (#1: map click adds to the dropdown.)
+        // Ward polygon → ALSO register it in the nav dropdown (bidirectional), but
+        // keep drilling in so voter areas / buildings stay reachable. (#1: map click
+        // adds to the dropdown; the existing drill is preserved — it falls through.)
         if (spec.id === 'ward' && onWardSelect) {
             const w = wardLabelToScope(feature.properties?.[spec.label_from || 'name'])?.ward;
             if (w) onWardSelect(w);
-            return;
+            // no return — continue to the drill logic below
         }
         if (action.startsWith('modal:')) {
             if (action === 'modal:canvassed_voters') setActiveBuilding(feature.properties);
