@@ -67,15 +67,6 @@ export default function DynamicDashboard() {
         setVoterModal({ scope, label: wardLabel });
     }
 
-    // #1: clicking a ward on the map toggles it in the same selection the dropdown edits.
-    function toggleWard(w) {
-        setNavScope((s) => {
-            const cur = s.ward || [];
-            const ward = cur.includes(w) ? cur.filter((x) => x !== w) : [...cur, w];
-            return { ...s, ward };
-        });
-    }
-
     const scopeLabel =
         Object.entries(filters)
             .filter(([, v]) => v != null && v !== '' && !(Array.isArray(v) && v.length === 0))
@@ -99,7 +90,6 @@ export default function DynamicDashboard() {
                 config={cfg}
                 candidateId={candidate?.candidate_id}
                 onLeafClick={handleLeafClick}
-                onWardSelect={toggleWard}
                 pinnedVoter={pinnedVoter}
                 onPinnedVoterClick={(v) => setActiveVoter(v)}
                 allowedWards={allowedWards}

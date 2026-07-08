@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import L from 'leaflet';
 import { MapContainer, TileLayer, GeoJSON, useMap, LayersControl, Marker, Popup, Tooltip } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -143,7 +143,6 @@ export default function DynamicMap({
     onPinnedVoterClick,  // optional: () => void — fired when the voter pin is clicked
     allowedWards,        // optional: string[] (Bengali digits) — restrict the ward layer to these wards only
     focusWards,          // optional: string[] (Bengali digits) — highlight + fit the map to these wards
-    onWardSelect,        // optional: (wardValue) => void — fired when a ward polygon is clicked (add to the dropdown selection)
 }) {
     const allLayers = Array.isArray(config?.layers) ? config.layers : [];
     // Drill layers form the click-to-drill hierarchy; overlay layers are
@@ -262,17 +261,10 @@ export default function DynamicMap({
     // When the nav selection changes, drive the map's drill so the selected wards
     // become the visible/clickable layer (skip the constituency step); clearing the
     // selection returns to the constituency root. Only for self-drilling maps.
-    //
-    // We only act when `focusWards` actually CHANGES (tracked via a ref) — otherwise
-    // this effect also runs on every data load and would keep resetting a drill the
-    // user just performed by hand, making direct map clicks feel dead.
-    const prevFocusKey = useRef('[]');
     useEffect(() => {
         if (controlledDrill !== undefined) return;
         const root = layersSpec[0];
         if (!root || root.id === 'ward') return; // ward is already the root — nothing to skip
-        const key = JSON.stringify(focusWards || []);
-        const selectionChanged = key !== prevFocusKey.current;
         if (focusWards?.length) {
             if (internalDrillStack.length === 0) {
                 const feat = dataByLayer[root.id]?.features?.[0];
@@ -282,25 +274,30 @@ export default function DynamicMap({
                     if (id != null) setInternalDrillStack([{ id: String(id), label: feat.properties[root.label_from] }]);
                 }
             }
-        } else if (selectionChanged && internalDrillStack.length > 0) {
-            // The selection was just cleared — go back to the constituency root.
-            // (Guarded by selectionChanged so a manual drill with no selection stays put.)
+        } else if (internalDrillStack.length > 0) {
             setInternalDrillStack([]);
         }
-        prevFocusKey.current = key;
     }, [JSON.stringify(focusWards), dataByLayer, layersSpec.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Restrict the ward layer to the volunteer's allowed wards only. We do NOT
-    // hide non-selected wards — every ward stays visible + clickable so the user
-    // can freely switch between wards. Selected wards are highlighted instead
-    // (see the ward layer style below).
+    // Restrict the ward layer: to the volunteer's allowed wards AND, when a nav
+    // selection is active, to the selected wards — so the map is constrained to
+    // the selection (non-selected wards aren't shown or clickable). One integrated
+    // system: selection drives what the map renders + drills into.
     function restrictWards(spec, data) {
         if (spec?.id !== 'ward' || !data?.features) return data;
-        if (!allowedWards?.length) return data;
-        const features = data.features.filter((f) => {
-            const scope = wardLabelToScope(f.properties?.[spec.label_from || 'name']);
-            return !scope?.ward || allowedWards.includes(scope.ward);
-        });
+        let features = data.features;
+        if (allowedWards?.length) {
+            features = features.filter((f) => {
+                const scope = wardLabelToScope(f.properties?.[spec.label_from || 'name']);
+                return !scope?.ward || allowedWards.includes(scope.ward);
+            });
+        }
+        if (focusWards?.length) {
+            features = features.filter((f) => {
+                const scope = wardLabelToScope(f.properties?.[spec.label_from || 'name']);
+                return scope?.ward && focusWards.includes(scope.ward);
+            });
+        }
         return { ...data, features };
     }
 
@@ -348,14 +345,6 @@ export default function DynamicMap({
 
     function onFeatureClick(spec, feature) {
         const action = spec.click || 'drill';
-        // Ward polygon → ALSO register it in the nav dropdown (bidirectional), but
-        // keep drilling in so voter areas / buildings stay reachable. (#1: map click
-        // adds to the dropdown; the existing drill is preserved — it falls through.)
-        if (spec.id === 'ward' && onWardSelect) {
-            const w = wardLabelToScope(feature.properties?.[spec.label_from || 'name'])?.ward;
-            if (w) onWardSelect(w);
-            // no return — continue to the drill logic below
-        }
         if (action.startsWith('modal:')) {
             if (action === 'modal:canvassed_voters') setActiveBuilding(feature.properties);
             return;
@@ -444,7 +433,7 @@ export default function DynamicMap({
                     const isDeepest = i === visibleCount - 1;
                     return (
                         <GeoJSON
-                            key={`${spec.id}-${i === 0 ? 'root' : drillStack[i - 1]?.id}-${data.features.length}${spec.id === 'ward' ? `-sel${(focusWards || []).join(',')}` : ''}`}
+                            key={`${spec.id}-${i === 0 ? 'root' : drillStack[i - 1]?.id}-${data.features.length}`}
                             data={data}
                             // Some layers mix polygons with Point features (e.g. a
                             // handful of point-only buildings). Render points as styled
@@ -460,15 +449,6 @@ export default function DynamicMap({
                             }}
                             style={(f) => {
                                 const s = styleFor(spec, f);
-                                // Highlight wards that are in the nav selection (green),
-                                // so the user can see what's selected without hiding the
-                                // other wards they may want to switch to.
-                                if (spec.id === 'ward' && focusWards?.length) {
-                                    const w = wardLabelToScope(f.properties?.[spec.label_from || 'name'])?.ward;
-                                    if (w && focusWards.includes(w)) {
-                                        return { ...s, fillColor: '#2E7D32', color: '#1B5E20', weight: 2.5, fillOpacity: 0.6 };
-                                    }
-                                }
                                 return isDeepest
                                     ? s
                                     // Parent layers are kept as visual context — dim them
