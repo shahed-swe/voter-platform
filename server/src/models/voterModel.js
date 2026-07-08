@@ -364,17 +364,28 @@ async function geoWardOptions(candidateId) {
     );
 }
 
-/** Distinct voter_area_name values for a candidate, optionally within given wards. */
+/**
+ * Distinct voter_area_name values for a candidate, optionally within given wards.
+ * Each area also carries the geo village + ward feature_id it maps to (from the
+ * curated voter_area_geo_map), so the map can drill straight to that area's
+ * buildings. village_feature_id is null for areas with no distinct polygon.
+ */
 async function geoAreaOptions(candidateId, wards) {
     const params = [candidateId];
     let wardClause = '';
-    if (wards?.length) { params.push(wards); wardClause = `AND ward = ANY($2)`; }
+    if (wards?.length) { params.push(wards); wardClause = `AND v.ward = ANY($2)`; }
     return many(
-        `SELECT voter_area_name AS value, COUNT(*)::int AS count
-           FROM voters
-          WHERE candidate_id = $1 AND voter_area_name IS NOT NULL AND voter_area_name <> '' ${wardClause}
-          GROUP BY voter_area_name
-          ORDER BY voter_area_name`,
+        `SELECT v.voter_area_name AS value,
+                COUNT(*)::int AS count,
+                m.village_feature_id,
+                m.ward_feature_id
+           FROM voters v
+           LEFT JOIN voter_area_geo_map m
+                  ON m.candidate_id = v.candidate_id
+                 AND m.voter_area_name = v.voter_area_name
+          WHERE v.candidate_id = $1 AND v.voter_area_name IS NOT NULL AND v.voter_area_name <> '' ${wardClause}
+          GROUP BY v.voter_area_name, m.village_feature_id, m.ward_feature_id
+          ORDER BY v.voter_area_name`,
         params
     );
 }

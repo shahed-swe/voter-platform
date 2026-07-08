@@ -8,6 +8,7 @@ import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 
 import * as layersApi from '../api/layers.js';
+import * as votersApi from '../api/voters.js';
 import CanvassedVotersModal from './dashboard/CanvassedVotersModal.jsx';
 import { LoadingState, ErrorState } from './LoadingState.jsx';
 import { wardLabelToScope } from '../utils/geoScope.js';
@@ -143,6 +144,7 @@ export default function DynamicMap({
     onPinnedVoterClick,  // optional: () => void — fired when the voter pin is clicked
     allowedWards,        // optional: string[] (Bengali digits) — restrict the ward layer to these wards only
     focusWards,          // optional: string[] (Bengali digits) — highlight + fit the map to these wards
+    focusAreaName,       // optional: a single selected voter_area_name — drill straight to its buildings
 }) {
     const allLayers = Array.isArray(config?.layers) ? config.layers : [];
     // Drill layers form the click-to-drill hierarchy; overlay layers are
@@ -162,6 +164,24 @@ export default function DynamicMap({
     const [activeBuilding, setActiveBuilding] = useState(null);
     const [overlayOn, setOverlayOn]     = useState({});  // overlayId → bool
     const [overlayData, setOverlayData] = useState({});  // overlayId → FeatureCollection
+    const [areaFids, setAreaFids]       = useState({});  // voter_area_name → { village_feature_id, ward_feature_id }
+
+    // Load the curated voter-area → geo (village + ward) mapping once, so selecting
+    // a voter area can drill the map straight to that area's buildings.
+    useEffect(() => {
+        let cancelled = false;
+        votersApi.geoOptions([])
+            .then((r) => {
+                if (cancelled) return;
+                const m = {};
+                for (const a of r.voter_areas || []) {
+                    if (a.village_feature_id) m[a.value] = { village: a.village_feature_id, ward: a.ward_feature_id };
+                }
+                setAreaFids(m);
+            })
+            .catch(() => {});
+        return () => { cancelled = true; };
+    }, [candidateId]);
     const [myLocation, setMyLocation]   = useState(null); // [lat, lng] — canvasser's live position (#8)
 
     // Track the canvasser's location. Needs an HTTPS secure context (see docs/HTTPS.md);
@@ -258,11 +278,16 @@ export default function DynamicMap({
         return () => { cancelled = true; };
     }, [JSON.stringify(drillStack.map((s) => s.id)), candidateId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+    // A single selected voter area that maps to a geo village — the area drill
+    // (below) owns the map in that case, so the ward drill must stand down.
+    const focusVillage = focusAreaName ? areaFids[focusAreaName] : null;
+
     // When the nav selection changes, drive the map's drill so the selected wards
     // become the visible/clickable layer (skip the constituency step); clearing the
     // selection returns to the constituency root. Only for self-drilling maps.
     useEffect(() => {
         if (controlledDrill !== undefined) return;
+        if (focusVillage?.village) return; // a matched voter area drives the drill instead
         const root = layersSpec[0];
         if (!root || root.id === 'ward') return; // ward is already the root — nothing to skip
         if (focusWards?.length) {
@@ -277,7 +302,29 @@ export default function DynamicMap({
         } else if (internalDrillStack.length > 0) {
             setInternalDrillStack([]);
         }
-    }, [JSON.stringify(focusWards), dataByLayer, layersSpec.length]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [JSON.stringify(focusWards), dataByLayer, layersSpec.length, focusVillage?.village]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // When a single voter area is selected and it maps to a geo village, drill the
+    // map straight to that village so its BUILDINGS become visible. Additive: does
+    // nothing unless focusAreaName resolves to a village.
+    useEffect(() => {
+        if (controlledDrill !== undefined) return;
+        if (!focusVillage?.village) return;
+        const root = layersSpec[0];
+        const rootFeat = dataByLayer[root?.id]?.features?.[0];
+        if (!rootFeat) return; // root not loaded yet — re-runs when dataByLayer fills in
+        const wardSpec = layersSpec[1], villageSpec = layersSpec[2];
+        if (!wardSpec || !villageSpec) return;
+        const rootId = String(rootFeat.properties[guessIdCol(root)]);
+        const target = [
+            { id: rootId, label: rootFeat.properties[root.label_from] },
+            { id: String(focusVillage.ward), label: wardSpec.label || 'Ward' },
+            { id: String(focusVillage.village), label: focusAreaName },
+        ];
+        // Idempotent: only re-drill when the target village actually changed.
+        if (internalDrillStack.length === 3 && internalDrillStack[2]?.id === target[2].id) return;
+        setInternalDrillStack(target);
+    }, [focusVillage?.village, dataByLayer, layersSpec.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Restrict the ward layer: to the volunteer's allowed wards AND, when a nav
     // selection is active, to the selected wards — so the map is constrained to
