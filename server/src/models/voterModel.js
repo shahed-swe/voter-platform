@@ -370,7 +370,9 @@ async function geoAreaOptions(candidateId, wards) {
     let wardClause = '';
     if (wards?.length) { params.push(wards); wardClause = `AND ward = ANY($2)`; }
     return many(
-        `SELECT voter_area_name AS value, COUNT(*)::int AS count
+        `SELECT voter_area_name AS value,
+                COUNT(*)::int AS count,
+                (array_agg(ward ORDER BY ward) FILTER (WHERE ward IS NOT NULL AND ward <> ''))[1] AS ward
            FROM voters
           WHERE candidate_id = $1 AND voter_area_name IS NOT NULL AND voter_area_name <> '' ${wardClause}
           GROUP BY voter_area_name

@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react';
-import DynamicMap from '../components/DynamicMap.jsx';
+import WardSelectMap from '../components/WardSelectMap.jsx';
 import DynamicFilterPanel from '../components/filters/DynamicFilterPanel.jsx';
 import GeoNavigator from '../components/GeoNavigator.jsx';
 import FilteredVoterListPanel from '../components/canvassing/FilteredVoterListPanel.jsx';
 import CanvassFormModal from '../components/canvassing/CanvassFormModal.jsx';
 import { useAuth } from '../auth/AuthContext.jsx';
-import { wardLabelToScope } from '../utils/geoScope.js';
 
 const EMPTY_SCOPE = { ward: [], voter_area: [] };
 
@@ -53,13 +52,14 @@ export default function DynamicCanvassing() {
         setPinnedVoter(null);
     }, [JSON.stringify(navScope), buildingScope]);
 
-    function handleLeafClick({ wardLabel, building }) {
-        const s = wardLabelToScope(wardLabel);
-        if (s) {
-            setBuildingScope(s);
-            setListRefreshKey((k) => k + 1);
-        }
-        setBuildingCtx(building || null);
+    // Map ↔ dropdown: clicking a ward on the map toggles the same ward selection
+    // the Navigate dropdown edits (bidirectional).
+    function toggleWard(w) {
+        setNavScope((s) => {
+            const cur = s.ward || [];
+            const ward = cur.includes(w) ? cur.filter((x) => x !== w) : [...cur, w];
+            return { ...s, ward };
+        });
     }
 
     const scopeLabel = buildingScope
@@ -80,14 +80,15 @@ export default function DynamicCanvassing() {
 
             {/* Map */}
             <div className="absolute inset-0">
-                <DynamicMap
+                <WardSelectMap
                     config={cfg}
                     candidateId={candidate?.candidate_id}
-                    onLeafClick={handleLeafClick}
+                    selectedWards={navScope.ward}
+                    focusAreas={navScope.voter_area}
+                    onToggleWard={toggleWard}
                     pinnedVoter={pinnedVoter}
                     onPinnedVoterClick={(v) => setActiveVoter(v)}
                     allowedWards={allowedWards}
-                    focusWards={navScope.ward}
                 />
             </div>
 

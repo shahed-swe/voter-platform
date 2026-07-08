@@ -1,12 +1,9 @@
 import { useEffect, useState } from 'react';
-import DynamicMap from '../components/DynamicMap.jsx';
+import WardSelectMap from '../components/WardSelectMap.jsx';
 import DynamicFilterPanel from '../components/filters/DynamicFilterPanel.jsx';
 import GeoNavigator from '../components/GeoNavigator.jsx';
-import FilteredVoterListPanel from '../components/canvassing/FilteredVoterListPanel.jsx';
-import CanvassFormModal from '../components/canvassing/CanvassFormModal.jsx';
 import * as votersApi from '../api/voters.js';
 import { useAuth } from '../auth/AuthContext.jsx';
-import { wardLabelToScope } from '../utils/geoScope.js';
 
 const EMPTY_SCOPE = { ward: [], voter_area: [] };
 
@@ -20,11 +17,6 @@ export default function DynamicDashboard() {
     const [navScope, setNavScope]           = useState(EMPTY_SCOPE); // multi-select ward + area
     const [filters, setFilters]             = useState({});
     const [stats, setStats]                 = useState(null);
-    const [voterModal, setVoterModal]       = useState(null);
-    const [pinnedVoter, setPinnedVoter]     = useState(null);
-    const [activeVoter, setActiveVoter]     = useState(null);
-    const [flash, setFlash]                 = useState(null);
-    const [listRefreshKey, setListRefreshKey] = useState(0);
     const [mobileNav, setMobileNav]         = useState(false); // mobile-only left panel toggle
 
     // Synchronous reset when candidate switches
@@ -34,20 +26,12 @@ export default function DynamicDashboard() {
         setNavScope(EMPTY_SCOPE);
         setFilters({});
         setStats(null);
-        setVoterModal(null);
-        setPinnedVoter(null);
-        setActiveVoter(null);
     }
 
     const wardScope = {
         ...(navScope.ward?.length ? { ward: navScope.ward } : {}),
         ...(navScope.voter_area?.length ? { voter_area: navScope.voter_area } : {}),
     };
-
-    // Clear pin whenever navigation changes (ward or voter area)
-    useEffect(() => {
-        setPinnedVoter(null);
-    }, [JSON.stringify(navScope)]);
 
     // Always load stats — including the initial whole-constituency view (no ward /
     // no filter). `stats_only` skips the voter list so the constituency-wide count
@@ -59,12 +43,15 @@ export default function DynamicDashboard() {
             .then((d) => !cancelled && setStats(d.stats || null))
             .catch(() => !cancelled && setStats(null));
         return () => { cancelled = true; };
-    }, [JSON.stringify(filters), JSON.stringify(wardScope), candidate?.candidate_id, listRefreshKey]);
+    }, [JSON.stringify(filters), JSON.stringify(wardScope), candidate?.candidate_id]);
 
-    function handleLeafClick({ wardLabel }) {
-        const scope = wardLabelToScope(wardLabel);
-        if (!scope) return;
-        setVoterModal({ scope, label: wardLabel });
+    // Map ↔ dropdown: clicking a ward toggles the same selection the dropdown edits.
+    function toggleWard(w) {
+        setNavScope((s) => {
+            const cur = s.ward || [];
+            const ward = cur.includes(w) ? cur.filter((x) => x !== w) : [...cur, w];
+            return { ...s, ward };
+        });
     }
 
     const scopeLabel =
@@ -72,7 +59,9 @@ export default function DynamicDashboard() {
             .filter(([, v]) => v != null && v !== '' && !(Array.isArray(v) && v.length === 0))
             .map(([, v]) => (Array.isArray(v) ? v.join(', ') : v))
             .join(' › ') ||
-        (navScope.ward?.length ? `${navScope.ward.length} ওয়ার্ড নির্বাচিত` : null) ||
+        (navScope.ward?.length
+            ? `${navScope.ward.length} ওয়ার্ড${navScope.voter_area?.length ? `, ${navScope.voter_area.length} এলাকা` : ''} নির্বাচিত`
+            : navScope.voter_area?.length ? `${navScope.voter_area.length} এলাকা নির্বাচিত` : null) ||
         candidate?.constituency ||
         candidate?.title;
 
@@ -80,20 +69,13 @@ export default function DynamicDashboard() {
 
     return (
         <div className="h-full w-full relative">
-            {flash && (
-                <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[900] bg-green-50 border border-green-200 text-green-700 rounded-md px-3 py-2 text-sm shadow-md">
-                    <i className="fas fa-check-circle mr-1" /> {flash}
-                </div>
-            )}
-
-            <DynamicMap
+            <WardSelectMap
                 config={cfg}
                 candidateId={candidate?.candidate_id}
-                onLeafClick={handleLeafClick}
-                pinnedVoter={pinnedVoter}
-                onPinnedVoterClick={(v) => setActiveVoter(v)}
+                selectedWards={navScope.ward}
+                focusAreas={navScope.voter_area}
+                onToggleWard={toggleWard}
                 allowedWards={allowedWards}
-                focusWards={navScope.ward}
             />
 
             {/* Left: geo navigator + voter filters */}
@@ -140,75 +122,6 @@ export default function DynamicDashboard() {
                 <StatBox label="Not Visited"  value={stats?.not_visited} tone="text-gray-700" />
                 <StatBox label="Follow-up"    value={stats?.follow_up}   tone="text-amber-600" />
             </aside>
-
-            {/* Pinned voter indicator */}
-            {pinnedVoter && !activeVoter && (
-                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[600] bg-indigo-600 text-white rounded-full px-4 py-2 text-sm shadow-lg flex items-center gap-2">
-                    <i className="fas fa-map-pin" />
-                    <span className="font-medium truncate max-w-[180px]">{pinnedVoter.name}</span>
-                    <span className="text-indigo-200 text-xs">— click pin to open</span>
-                    <button
-                        className="ml-1 text-indigo-200 hover:text-white"
-                        onClick={() => setPinnedVoter(null)}
-                    >
-                        <i className="fas fa-times" />
-                    </button>
-                </div>
-            )}
-
-            {/* Voter list modal: opens when a building is clicked */}
-            {voterModal && (
-                <div className="fixed inset-0 z-[800] flex items-center justify-center">
-                    <div
-                        className="absolute inset-0 bg-black/40"
-                        onClick={() => setVoterModal(null)}
-                    />
-                    <div className="relative z-10 w-[480px] h-[75vh] flex flex-col bg-white rounded-xl shadow-2xl overflow-hidden">
-                        <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between bg-brand/5">
-                            <div>
-                                <div className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Voters</div>
-                                <div className="text-sm font-semibold text-gray-800 truncate max-w-[340px]">
-                                    {voterModal.label}
-                                </div>
-                            </div>
-                            <button
-                                className="text-gray-400 hover:text-gray-700 text-lg"
-                                onClick={() => setVoterModal(null)}
-                            >
-                                <i className="fas fa-times" />
-                            </button>
-                        </div>
-                        <div className="flex-1 overflow-hidden">
-                            <FilteredVoterListPanel
-                                filters={{}}
-                                scope={voterModal.scope}
-                                scopeLabel={voterModal.label}
-                                refreshKey={listRefreshKey}
-                                onPickVoter={(v) => {
-                                    setVoterModal(null);
-                                    setPinnedVoter(v);
-                                    setActiveVoter(v);   // open the canvass form directly (#1)
-                                }}
-                            />
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Canvass form: opens when the voter pin is clicked */}
-            {activeVoter && (
-                <CanvassFormModal
-                    voter={activeVoter}
-                    onClose={() => setActiveVoter(null)}
-                    onSubmitted={() => {
-                        setFlash(`Saved canvass for ${activeVoter.name}`);
-                        setActiveVoter(null);
-                        setPinnedVoter(null);
-                        setListRefreshKey((k) => k + 1);   // refresh list + stats (#3)
-                        setTimeout(() => setFlash(null), 4000);
-                    }}
-                />
-            )}
         </div>
     );
 }
