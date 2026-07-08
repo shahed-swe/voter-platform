@@ -150,9 +150,14 @@ function WardHighlight({ focusWards, wardLayer, onWardClick }) {
     }, [JSON.stringify(focusWards), wardLayer?.source]); // eslint-disable-line react-hooks/exhaustive-deps
 
     if (!feats?.length) return null;
+    // Key off the actual rendered features (not focusWards) — focusWards changes
+    // before the async fetch resolves, so keying on it would remount with stale
+    // data and then never update. Keying on feats remounts exactly when the data
+    // changes, so each newly-selected ward highlights immediately.
+    const featKey = feats.map((f) => f.properties?.feature_id ?? f.id ?? '').join(',');
     return (
         <GeoJSON
-            key={`wh-${focusWards.join(',')}`}
+            key={`wh-${featKey}`}
             data={{ type: 'FeatureCollection', features: feats }}
             style={{ color: '#1B5E20', weight: 2.5, fillColor: '#2E7D32', fillOpacity: 0.45 }}
             onEachFeature={(f, layer) => {
