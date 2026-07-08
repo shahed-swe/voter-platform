@@ -62,6 +62,15 @@ export default function DynamicCanvassing() {
         setBuildingCtx(building || null);
     }
 
+    // #1: clicking a ward on the map toggles it in the same selection the dropdown edits.
+    function toggleWard(w) {
+        setNavScope((s) => {
+            const cur = s.ward || [];
+            const ward = cur.includes(w) ? cur.filter((x) => x !== w) : [...cur, w];
+            return { ...s, ward };
+        });
+    }
+
     const scopeLabel = buildingScope
         ? 'নির্বাচিত ভবন'
         : navScope.ward?.length
@@ -84,6 +93,7 @@ export default function DynamicCanvassing() {
                     config={cfg}
                     candidateId={candidate?.candidate_id}
                     onLeafClick={handleLeafClick}
+                    onWardSelect={toggleWard}
                     pinnedVoter={pinnedVoter}
                     onPinnedVoterClick={(v) => setActiveVoter(v)}
                     allowedWards={allowedWards}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import { MapContainer, TileLayer, GeoJSON, useMap, LayersControl, Marker, Popup, Tooltip } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -143,6 +143,7 @@ export default function DynamicMap({
     onPinnedVoterClick,  // optional: () => void — fired when the voter pin is clicked
     allowedWards,        // optional: string[] (Bengali digits) — restrict the ward layer to these wards only
     focusWards,          // optional: string[] (Bengali digits) — highlight + fit the map to these wards
+    onWardSelect,        // optional: (wardValue) => void — fired when a ward polygon is clicked (add to the dropdown selection)
 }) {
     const allLayers = Array.isArray(config?.layers) ? config.layers : [];
     // Drill layers form the click-to-drill hierarchy; overlay layers are
@@ -261,10 +262,17 @@ export default function DynamicMap({
     // When the nav selection changes, drive the map's drill so the selected wards
     // become the visible/clickable layer (skip the constituency step); clearing the
     // selection returns to the constituency root. Only for self-drilling maps.
+    //
+    // We only act when `focusWards` actually CHANGES (tracked via a ref) — otherwise
+    // this effect also runs on every data load and would keep resetting a drill the
+    // user just performed by hand, making direct map clicks feel dead.
+    const prevFocusKey = useRef('[]');
     useEffect(() => {
         if (controlledDrill !== undefined) return;
         const root = layersSpec[0];
         if (!root || root.id === 'ward') return; // ward is already the root — nothing to skip
+        const key = JSON.stringify(focusWards || []);
+        const selectionChanged = key !== prevFocusKey.current;
         if (focusWards?.length) {
             if (internalDrillStack.length === 0) {
                 const feat = dataByLayer[root.id]?.features?.[0];
@@ -274,9 +282,12 @@ export default function DynamicMap({
                     if (id != null) setInternalDrillStack([{ id: String(id), label: feat.properties[root.label_from] }]);
                 }
             }
-        } else if (internalDrillStack.length > 0) {
+        } else if (selectionChanged && internalDrillStack.length > 0) {
+            // The selection was just cleared — go back to the constituency root.
+            // (Guarded by selectionChanged so a manual drill with no selection stays put.)
             setInternalDrillStack([]);
         }
+        prevFocusKey.current = key;
     }, [JSON.stringify(focusWards), dataByLayer, layersSpec.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Restrict the ward layer: to the volunteer's allowed wards AND, when a nav
@@ -345,6 +356,13 @@ export default function DynamicMap({
 
     function onFeatureClick(spec, feature) {
         const action = spec.click || 'drill';
+        // Ward polygon → toggle it in the nav selection (bidirectional with the
+        // dropdown) rather than drilling deeper. (#1: map click adds to the dropdown.)
+        if (spec.id === 'ward' && onWardSelect) {
+            const w = wardLabelToScope(feature.properties?.[spec.label_from || 'name'])?.ward;
+            if (w) onWardSelect(w);
+            return;
+        }
         if (action.startsWith('modal:')) {
             if (action === 'modal:canvassed_voters') setActiveBuilding(feature.properties);
             return;
