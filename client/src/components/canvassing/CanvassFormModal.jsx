@@ -85,20 +85,56 @@ export default function CanvassFormModal({ voter, building, onClose, onSubmitted
             [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value,
         }));
 
+    const [gpsBusy, setGpsBusy] = useState(false);
+
+    const GPS_ERRORS = {
+        1: 'লোকেশন অনুমতি দেওয়া হয়নি — ব্রাউজার সেটিংসে এই সাইটের লোকেশন পারমিশন চালু করুন।',
+        2: 'লোকেশন পাওয়া যাচ্ছে না — ডিভাইসের GPS/লোকেশন সার্ভিস চালু আছে কিনা দেখুন।',
+        3: 'লোকেশন পেতে সময় শেষ — খোলা জায়গায় গিয়ে আবার চেষ্টা করুন।',
+    };
+
+    const applyPosition = (pos) => {
+        setGpsBusy(false);
+        setForm((f) => ({
+            ...f,
+            latitude: pos.coords.latitude.toFixed(6),
+            longitude: pos.coords.longitude.toFixed(6),
+            location_verified: true,
+        }));
+    };
+
     const captureGps = () => {
         if (!navigator.geolocation) {
-            setError('জিপিএস অনুপলব্ধ');
+            setError('এই ব্রাউজারে জিপিএস সমর্থিত নয়');
             return;
         }
+        // Browsers block the Geolocation API off HTTPS entirely (see docs/HTTPS.md).
+        if (!window.isSecureContext) {
+            setError('জিপিএস শুধুমাত্র নিরাপদ (https://) ঠিকানায় কাজ করে — HTTPS দিয়ে সাইটটি খুলুন।');
+            return;
+        }
+        setGpsBusy(true);
+        setError(null);
+        // Fresh, high-accuracy fix first; if the GPS can't deliver one in time,
+        // retry once accepting a coarser / recently cached position.
         navigator.geolocation.getCurrentPosition(
-            (pos) =>
-                setForm((f) => ({
-                    ...f,
-                    latitude: pos.coords.latitude,
-                    longitude: pos.coords.longitude,
-                    location_verified: true,
-                })),
-            (err) => setError(err.message)
+            applyPosition,
+            (err) => {
+                if (err.code === 1) {
+                    setGpsBusy(false);
+                    setError(GPS_ERRORS[1]);
+                    return;
+                }
+                navigator.geolocation.getCurrentPosition(
+                    applyPosition,
+                    (err2) => {
+                        setGpsBusy(false);
+                        setError(GPS_ERRORS[err2.code] || err2.message);
+                    },
+                    { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 }
+                );
+            },
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
         );
     };
 
@@ -302,8 +338,9 @@ export default function CanvassFormModal({ voter, building, onClose, onSubmitted
                             <label className="block text-xs font-medium text-gray-600 mb-1">Longitude</label>
                             <input className="input-field" value={form.longitude} onChange={update('longitude')} />
                         </div>
-                        <button type="button" className="btn-secondary" onClick={captureGps}>
-                            <i className="fas fa-location-crosshairs" /> GPS ক্যাপচার
+                        <button type="button" className="btn-secondary" onClick={captureGps} disabled={gpsBusy}>
+                            {gpsBusy ? <Spinner size="sm" /> : <i className="fas fa-location-crosshairs" />}
+                            <span className="bn">{gpsBusy ? ' লোকেশন নেওয়া হচ্ছে...' : ' GPS ক্যাপচার'}</span>
                         </button>
                     </div>
 
