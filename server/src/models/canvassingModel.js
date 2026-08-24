@@ -163,6 +163,21 @@ async function submit(candidateId, { voterId, userId, politicalCandidateId, payl
             ]
         );
 
+        // Crowd-source building names: OSM only names ~2% of building footprints.
+        // When the canvasser typed a name for a geo-tagged building, save it onto
+        // the geo feature (never overwriting an existing curated name) so the map
+        // and future canvasses show the real name instead of "way/…".
+        const typedName = (payload.building_name || '').trim();
+        if (payload.building_feature_id && typedName) {
+            await client.query(
+                `UPDATE geo_layers
+                    SET props = jsonb_set(COALESCE(props, '{}'::jsonb), '{building_name}', to_jsonb($3::text))
+                  WHERE candidate_id = $1 AND layer_key = 'building' AND feature_id = $2
+                    AND (props->>'building_name' IS NULL OR props->>'building_name' = '')`,
+                [candidateId, payload.building_feature_id, typedName]
+            );
+        }
+
         // Only update shared voters.status when there is no political-candidate
         // isolation (single-candidate constituency or super-admin context).
         if (!politicalCandidateId) {

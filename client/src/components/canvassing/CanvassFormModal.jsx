@@ -322,11 +322,22 @@ export default function CanvassFormModal({ voter, building, onClose, onSubmitted
                             ঠিকানা (শহুরে ক্যানভাসিংয়ের জন্য)
                         </legend>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-1">
-                            <input className="input-field" placeholder="ভবন" value={form.building_name} onChange={update('building_name')} />
+                            <input className="input-field bn" placeholder="ভবনের নাম" value={form.building_name} onChange={update('building_name')} />
                             <input className="input-field" placeholder="তলা" value={form.floor_number} onChange={update('floor_number')} />
                             <input className="input-field" placeholder="ফ্ল্যাট" value={form.flat_number} onChange={update('flat_number')} />
                             <input className="input-field" placeholder="ঠিকানা" value={form.address} onChange={update('address')} />
                         </div>
+                        {building?.building_id != null && (
+                            <p className="text-[11px] text-gray-500 mt-1.5 bn">
+                                <i className="fas fa-building mr-1 text-gray-400" />
+                                নির্বাচিত ভবন:{' '}
+                                {building.building_name || (
+                                    <span className="font-mono text-gray-400">#{building.building_id}</span>
+                                )}
+                                {!building.building_name &&
+                                    ' — এই ভবনের কোনো নাম নেই। নাম লিখে দিলে ম্যাপে সংরক্ষিত হবে।'}
+                            </p>
+                        )}
                     </fieldset>
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
