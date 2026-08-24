@@ -44,9 +44,10 @@ export default function DynamicCanvassing() {
         ...(navScope.voter_area?.length ? { voter_area: navScope.voter_area } : {}),
     };
 
-    // Selecting in the nav clears any single-building drill-down.
+    // Selecting in the nav clears any single-building drill-down/selection.
     useEffect(() => {
         setBuildingScope(null);
+        setBuildingCtx(null);
     }, [JSON.stringify(navScope)]);
 
     // Clear pin whenever navigation changes (ward, voter area, or building)
@@ -73,11 +74,13 @@ export default function DynamicCanvassing() {
     }, [JSON.stringify(navScope), candidate?.candidate_id, listRefreshKey]);
 
     function handleLeafClick({ wardLabel, building }) {
+        // Ward-labelled drills (clicked through the map) narrow the list to that
+        // ward. Navigator-driven drills carry a generic "Ward" label that can't be
+        // parsed — the GeoNavigator scope already narrows the list there, so the
+        // click still counts: it selects the building (highlight + canvass tagging).
         const s = wardLabelToScope(wardLabel);
-        if (s) {
-            setBuildingScope(s);
-            setListRefreshKey((k) => k + 1);
-        }
+        if (s) setBuildingScope(s);
+        setListRefreshKey((k) => k + 1);
         setBuildingCtx(building || null);
     }
 
@@ -106,6 +109,7 @@ export default function DynamicCanvassing() {
                     pinnedVoter={pinnedVoter}
                     onPinnedVoterClick={(v) => setActiveVoter(v)}
                     voterPins={voterPins}
+                    selectedFeatureId={buildingCtx?.building_id ?? null}
                     allowedWards={allowedWards}
                     focusWards={navScope.ward}
                     focusAreaName={navScope.voter_area?.length === 1 ? navScope.voter_area[0] : null}
@@ -169,6 +173,23 @@ export default function DynamicCanvassing() {
                     </button>
                 )}
             </div>
+
+            {/* Selected building indicator — canvasses now tag to this building */}
+            {buildingCtx && (
+                <div className="absolute top-16 left-1/2 -translate-x-1/2 z-[590] bg-amber-50 border border-amber-300 text-amber-800 rounded-full px-4 py-1.5 text-sm shadow-md flex items-center gap-2">
+                    <i className="fas fa-building" />
+                    <span className="bn font-medium truncate max-w-[220px]">
+                        {buildingCtx.building_name || `ভবন #${buildingCtx.building_id}`}
+                    </span>
+                    <button
+                        className="text-amber-500 hover:text-amber-800"
+                        onClick={() => setBuildingCtx(null)}
+                        title="Clear selected building"
+                    >
+                        <i className="fas fa-times" />
+                    </button>
+                </div>
+            )}
 
             {/* Pinned voter indicator */}
             {pinnedVoter && !activeVoter && (

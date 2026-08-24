@@ -161,6 +161,7 @@ export default function DynamicMap({
     pinnedVoter,         // optional: voter object to show as a map pin at the ward centre
     onPinnedVoterClick,  // optional: () => void — fired when the voter pin is clicked
     voterPins,           // optional: voters with canvass_latitude/longitude — ALL shown as pins
+    selectedFeatureId,   // optional: feature_id in the deepest layer (e.g. a clicked building) to highlight
     allowedWards,        // optional: string[] (Bengali digits) — restrict the ward layer to these wards only
     focusWards,          // optional: string[] (Bengali digits) — highlight + fit the map to these wards
     focusAreaName,       // optional: a single selected voter_area_name — drill straight to its buildings
@@ -418,8 +419,12 @@ export default function DynamicMap({
         if (action === 'select') return;
         if (action === 'voters') {
             // Leaf layer (building) — fire parent callback with the ward context from drillStack
-            // drillStack = [{constituency}, {ward}, {village}]; ward is index 1
+            // drillStack = [{constituency}, {ward}, {village}]; ward is index 1.
+            // NOTE: when the drill was driven by the GeoNavigator the ward entry only
+            // carries the generic layer label ("Ward") — the page must not rely on
+            // parsing it. areaLabel carries the selected voter area's name instead.
             const wardLabel = drillStack[1]?.label || null;
+            const areaLabel = drillStack[2]?.label || null;
             // Capture the building's id + centroid so the canvass can be tagged to
             // this building and reuse its geolocation for the voter (#4, #6).
             let center = null;
@@ -430,6 +435,7 @@ export default function DynamicMap({
             const p = feature.properties || {};
             onLeafClick?.({
                 wardLabel,
+                areaLabel,
                 feature: p,
                 building: {
                     building_id:   p.feature_id ?? null,
@@ -499,7 +505,10 @@ export default function DynamicMap({
                     const isDeepest = i === visibleCount - 1;
                     return (
                         <GeoJSON
-                            key={`${spec.id}-${i === 0 ? 'root' : drillStack[i - 1]?.id}-${data.features.length}`}
+                            // selectedFeatureId is part of the key: GeoJSON styles are
+                            // applied at mount, so remount the (small) deepest layer to
+                            // repaint the selection highlight.
+                            key={`${spec.id}-${i === 0 ? 'root' : drillStack[i - 1]?.id}-${data.features.length}${isDeepest && selectedFeatureId != null ? `-sel${selectedFeatureId}` : ''}`}
                             data={data}
                             // Some layers mix polygons with Point features (e.g. a
                             // handful of point-only buildings). Render points as styled
@@ -515,6 +524,14 @@ export default function DynamicMap({
                             }}
                             style={(f) => {
                                 const s = styleFor(spec, f);
+                                // Selected building (or other leaf feature) — amber highlight
+                                if (
+                                    isDeepest &&
+                                    selectedFeatureId != null &&
+                                    String(f.properties?.feature_id) === String(selectedFeatureId)
+                                ) {
+                                    return { ...s, color: '#E65100', weight: 3, fillColor: '#FFB300', fillOpacity: 0.7 };
+                                }
                                 return isDeepest
                                     ? s
                                     // Parent layers are kept as visual context — dim them
