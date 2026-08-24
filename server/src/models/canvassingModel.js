@@ -53,6 +53,32 @@ async function allLocations(candidateId, { limit = 5000, politicalCandidateId = 
     );
 }
 
+/**
+ * Latest canvassed location per voter within a ward / voter-area scope — powers
+ * the "all located voters as pins" map layer on the canvassing page. Null wards /
+ * voterAreas mean "no restriction on that axis".
+ */
+async function voterLocationsByScope(candidateId, { wards = null, voterAreas = null, politicalCandidateId = null, limit = 5000 } = {}) {
+    return many(
+        `SELECT DISTINCT ON (c.voter_id)
+                c.voter_id, c.follow_up_needed, c.support_level, c.canvass_date,
+                c.latitude  AS canvass_latitude,
+                c.longitude AS canvass_longitude,
+                v.name, v.sos_vid, v.father_husband, v.age, v.gender,
+                v.ward, v.voter_area_name, v.voter_area_code, v.address
+           FROM canvassing c
+           JOIN voters v ON v.voter_id = c.voter_id
+          WHERE c.candidate_id = $1
+            AND ($2::bigint IS NULL OR c.political_candidate_id = $2)
+            AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL
+            AND ($3::text[] IS NULL OR v.ward = ANY($3::text[]))
+            AND ($4::text[] IS NULL OR v.voter_area_name = ANY($4::text[]))
+          ORDER BY c.voter_id, c.canvass_date DESC
+          LIMIT $5`,
+        [candidateId, politicalCandidateId, wards, voterAreas, limit]
+    );
+}
+
 async function listVoterRecords(candidateId, { limit = 200, offset = 0, search = null, politicalCandidateId = null } = {}) {
     const params = [candidateId, politicalCandidateId];
     let searchClause = '';
@@ -157,6 +183,7 @@ module.exports = {
     historyForVoter,
     locationsByVillage,
     allLocations,
+    voterLocationsByScope,
     listVoterRecords,
     stats,
     submit,

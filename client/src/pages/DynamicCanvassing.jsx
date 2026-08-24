@@ -4,6 +4,7 @@ import DynamicFilterPanel from '../components/filters/DynamicFilterPanel.jsx';
 import GeoNavigator from '../components/GeoNavigator.jsx';
 import FilteredVoterListPanel from '../components/canvassing/FilteredVoterListPanel.jsx';
 import CanvassFormModal from '../components/canvassing/CanvassFormModal.jsx';
+import * as canvassingApi from '../api/canvassing.js';
 import { useAuth } from '../auth/AuthContext.jsx';
 import { wardLabelToScope } from '../utils/geoScope.js';
 
@@ -53,6 +54,24 @@ export default function DynamicCanvassing() {
         setPinnedVoter(null);
     }, [JSON.stringify(navScope), buildingScope]);
 
+    // All voters in the selected ward/area whose latest canvass has a geolocation —
+    // shown together as pins on the map. Refreshes after each canvass submit so a
+    // newly captured location appears immediately.
+    const [voterPins, setVoterPins] = useState([]);
+    useEffect(() => {
+        const scope = {
+            ...(navScope.ward?.length ? { ward: navScope.ward } : {}),
+            ...(navScope.voter_area?.length ? { voter_area: navScope.voter_area } : {}),
+        };
+        if (!Object.keys(scope).length) { setVoterPins([]); return; }
+        let cancelled = false;
+        canvassingApi
+            .voterLocations({ scope })
+            .then((d) => !cancelled && setVoterPins(d.voters || []))
+            .catch(() => !cancelled && setVoterPins([]));
+        return () => { cancelled = true; };
+    }, [JSON.stringify(navScope), candidate?.candidate_id, listRefreshKey]);
+
     function handleLeafClick({ wardLabel, building }) {
         const s = wardLabelToScope(wardLabel);
         if (s) {
@@ -86,6 +105,7 @@ export default function DynamicCanvassing() {
                     onLeafClick={handleLeafClick}
                     pinnedVoter={pinnedVoter}
                     onPinnedVoterClick={(v) => setActiveVoter(v)}
+                    voterPins={voterPins}
                     allowedWards={allowedWards}
                     focusWards={navScope.ward}
                     focusAreaName={navScope.voter_area?.length === 1 ? navScope.voter_area[0] : null}

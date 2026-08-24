@@ -39,6 +39,14 @@ const overlayPin = L.divIcon({
     iconAnchor: [8, 16],
 });
 
+// Small indigo dot for every located (canvassed) voter in the selected scope.
+const voterDotIcon = L.divIcon({
+    className: '',
+    html: '<div style="width:14px;height:14px;border-radius:50%;background:#4f46e5;border:2px solid #fff;box-shadow:0 1px 4px rgba(79,70,229,0.6)"></div>',
+    iconSize: [14, 14],
+    iconAnchor: [7, 7],
+});
+
 // Pulsing blue dot for the canvasser's own live location (#8).
 const myLocationIcon = L.divIcon({
     className: '',
@@ -109,6 +117,16 @@ function styleFor(layerSpec, feature) {
     };
 }
 
+// Fly to a point (the voter picked from the list) without changing the drill state.
+function FlyTo({ position }) {
+    const map = useMap();
+    useEffect(() => {
+        if (!position) return;
+        map.flyTo(position, Math.max(map.getZoom(), 17), { duration: 0.8 });
+    }, [position?.[0], position?.[1]]); // eslint-disable-line react-hooks/exhaustive-deps
+    return null;
+}
+
 // Auto-fit to whatever features are visible
 function FitTo({ features }) {
     const map = useMap();
@@ -142,6 +160,7 @@ export default function DynamicMap({
     onLeafClick,         // optional: ({wardLabel, feature}) => void — fired when a 'voters' leaf is clicked
     pinnedVoter,         // optional: voter object to show as a map pin at the ward centre
     onPinnedVoterClick,  // optional: () => void — fired when the voter pin is clicked
+    voterPins,           // optional: voters with canvass_latitude/longitude — ALL shown as pins
     allowedWards,        // optional: string[] (Bengali digits) — restrict the ward layer to these wards only
     focusWards,          // optional: string[] (Bengali digits) — highlight + fit the map to these wards
     focusAreaName,       // optional: a single selected voter_area_name — drill straight to its buildings
@@ -546,6 +565,30 @@ export default function DynamicMap({
                     });
                 })}
 
+                {/* All located voters in the selected scope — one dot each. The
+                    focused voter keeps the big teardrop pin below instead. */}
+                {(voterPins || []).map((v) => {
+                    const lat = Number(v.canvass_latitude);
+                    const lng = Number(v.canvass_longitude);
+                    if (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0)) return null;
+                    if (pinnedVoter?.voter_id === v.voter_id) return null;
+                    return (
+                        <Marker
+                            key={`vloc-${v.voter_id}`}
+                            position={[lat, lng]}
+                            icon={voterDotIcon}
+                            eventHandlers={{ click: () => onPinnedVoterClick?.(v) }}
+                        >
+                            <Tooltip direction="top" offset={[0, -8]} opacity={1}>
+                                <span className="text-xs font-semibold bn">{v.name || v.voter_id}</span>
+                                {v.voter_area_name && (
+                                    <span className="block text-[10px] text-gray-500 bn">{v.voter_area_name}</span>
+                                )}
+                            </Tooltip>
+                        </Marker>
+                    );
+                })}
+
                 {/* Voter pin — shown when a voter has been selected from the list */}
                 {pinnedWardCenter && pinnedVoter && (
                     <Marker
@@ -559,6 +602,15 @@ export default function DynamicMap({
                         </Tooltip>
                     </Marker>
                 )}
+
+                {/* Focus the map on the picked voter when they have an exact canvassed location */}
+                {pinnedVoter && (() => {
+                    const lat = Number(pinnedVoter.canvass_latitude);
+                    const lng = Number(pinnedVoter.canvass_longitude);
+                    return Number.isFinite(lat) && Number.isFinite(lng) && (lat !== 0 || lng !== 0)
+                        ? <FlyTo position={[lat, lng]} />
+                        : null;
+                })()}
 
                 {/* Canvasser's own live location (#8) */}
                 {myLocation && (
