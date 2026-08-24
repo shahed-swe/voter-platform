@@ -410,6 +410,36 @@ export default function DynamicMap({
         return null;
     }, [pinnedVoter?.voter_id, JSON.stringify(drillStack.map((s) => s.id)), dataByLayer]); // eslint-disable-line react-hooks/exhaustive-deps
 
+    // Voters canvassed at the same building all carry that building's centroid, so
+    // their pins would stack exactly and hide each other. Group pins by (~1m) cell
+    // and lay co-located groups out in a small ring (~7m radius) around the shared
+    // point — every voter stays visible and individually clickable.
+    const spreadVoterPins = useMemo(() => {
+        const groups = new Map();
+        for (const v of voterPins || []) {
+            const lat = Number(v.canvass_latitude);
+            const lng = Number(v.canvass_longitude);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0)) continue;
+            const key = `${lat.toFixed(5)},${lng.toFixed(5)}`;
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push({ ...v, _lat: lat, _lng: lng });
+        }
+        const out = [];
+        const R = 0.00006; // ≈ 6–7 m in latitude degrees
+        for (const group of groups.values()) {
+            if (group.length === 1) { out.push(group[0]); continue; }
+            group.forEach((v, i) => {
+                const angle = (2 * Math.PI * i) / group.length;
+                out.push({
+                    ...v,
+                    _lat: v._lat + R * Math.sin(angle),
+                    _lng: v._lng + (R * Math.cos(angle)) / Math.cos((v._lat * Math.PI) / 180),
+                });
+            });
+        }
+        return out;
+    }, [voterPins]);
+
     function onFeatureClick(spec, feature) {
         const action = spec.click || 'drill';
         if (action.startsWith('modal:')) {
@@ -582,17 +612,17 @@ export default function DynamicMap({
                     });
                 })}
 
-                {/* All located voters in the selected scope — one dot each. The
-                    focused voter keeps the big teardrop pin below instead. */}
-                {(voterPins || []).map((v) => {
-                    const lat = Number(v.canvass_latitude);
-                    const lng = Number(v.canvass_longitude);
-                    if (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0)) return null;
+                {/* All located voters in the selected scope — one dot each. Voters
+                    canvassed at the same building share identical coordinates, so
+                    co-located pins are spread into a small ring — otherwise they
+                    stack and only the newest voter appears. The focused voter keeps
+                    the big teardrop pin below instead. */}
+                {spreadVoterPins.map((v) => {
                     if (pinnedVoter?.voter_id === v.voter_id) return null;
                     return (
                         <Marker
                             key={`vloc-${v.voter_id}`}
-                            position={[lat, lng]}
+                            position={[v._lat, v._lng]}
                             icon={voterDotIcon}
                             eventHandlers={{ click: () => onPinnedVoterClick?.(v) }}
                         >
