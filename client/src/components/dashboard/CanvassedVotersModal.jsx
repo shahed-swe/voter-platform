@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import * as urbanApi from '../../api/urban.js';
-import { LoadingState, ErrorState, EmptyState } from '../LoadingState.jsx';
+import { SkeletonTable, ErrorState, EmptyState } from '../LoadingState.jsx';
 
 const BN_DIGITS = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
 const BN_MONTHS = [
@@ -85,7 +85,7 @@ export default function CanvassedVotersModal({ building, onClose }) {
 
                 <div className="overflow-y-auto overflow-x-auto px-4 sm:px-6 py-4">
                     {loading ? (
-                        <LoadingState />
+                        <SkeletonTable rows={4} cols={4} />
                     ) : error ? (
                         <ErrorState error={error} />
                     ) : count === 0 ? (

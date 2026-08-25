@@ -64,7 +64,7 @@ export default function ImportDataPage() {
 
     if (!user?.is_super_admin) return <ErrorState error={{ message: 'Super-admin only' }} />;
     if (error) return <ErrorState error={error} />;
-    if (layers === null) return <LoadingState />;
+    if (layers === null) return <LoadingState full />;
 
     return (
         <>

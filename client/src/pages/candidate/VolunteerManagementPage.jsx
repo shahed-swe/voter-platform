@@ -3,7 +3,7 @@ import * as peopleApi from '../../api/people.js';
 import * as layersApi from '../../api/layers.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { wardLabelToScope } from '../../utils/geoScope.js';
-import { LoadingState, ErrorState, EmptyState, Spinner } from '../../components/LoadingState.jsx';
+import { SkeletonList, Skeleton, ErrorState, EmptyState, Spinner } from '../../components/LoadingState.jsx';
 
 /**
  * Resolve the ward layer (source + label field) for the active constituency
@@ -384,7 +384,14 @@ export default function VolunteerManagementPage() {
     }
 
     if (error) return <ErrorState error={error} />;
-    if (!volunteers) return <LoadingState />;
+    if (!volunteers) {
+        return (
+            <div className="max-w-3xl mx-auto space-y-6">
+                <Skeleton className="h-8 w-56" />
+                <SkeletonList rows={5} lines={1} />
+            </div>
+        );
+    }
 
     return (
         <div className="max-w-3xl mx-auto space-y-6">

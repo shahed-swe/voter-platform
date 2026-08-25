@@ -289,7 +289,7 @@ export default function UrbanDashboard() {
         return wardsGeo?.features || [];
     }, [mode, wardsGeo, voterAreasGeo, wardIds, voterAreaIds]);
 
-    if (loadingBase) return <LoadingState />;
+    if (loadingBase) return <LoadingState full />;
     if (error)       return <ErrorState error={error} onRetry={() => window.location.reload()} />;
 
     return (

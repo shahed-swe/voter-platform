@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import * as candidatesApi from '../../api/candidates.js';
 import PageHeader from '../../components/PageHeader.jsx';
-import { LoadingState, ErrorState, EmptyState, Spinner } from '../../components/LoadingState.jsx';
+import { SkeletonCard, ErrorState, EmptyState, Spinner } from '../../components/LoadingState.jsx';
 import { useAuth } from '../../auth/AuthContext.jsx';
 
 export default function CandidatesListPage() {
@@ -33,7 +33,13 @@ export default function CandidatesListPage() {
     }
 
     if (error) return <ErrorState error={error} />;
-    if (list === null) return <LoadingState />;
+    if (list === null) {
+        return (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} bodyClass="h-28" />)}
+            </div>
+        );
+    }
 
     return (
         <>

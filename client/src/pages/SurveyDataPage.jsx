@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import * as canvassingApi from '../api/canvassing.js';
 import { useAuth } from '../auth/AuthContext.jsx';
-import { LoadingState, ErrorState, EmptyState, Spinner } from '../components/LoadingState.jsx';
+import { SkeletonList, SkeletonStats, Skeleton, ErrorState, EmptyState, Spinner } from '../components/LoadingState.jsx';
 
 const BN = ['০','১','২','৩','৪','৫','৬','৭','৮','৯'];
 const toBn = (s) => String(s ?? '').replace(/[0-9]/g, (d) => BN[+d]);
@@ -80,7 +80,16 @@ export default function SurveyDataPage() {
     }, [q]); // eslint-disable-line react-hooks/exhaustive-deps
 
     if (error) return <ErrorState error={error} onRetry={() => load('')} />;
-    if (records === null) return <LoadingState />;
+    if (records === null) {
+        return (
+            <div className="max-w-5xl mx-auto space-y-5">
+                <Skeleton className="h-8 w-48" />
+                <SkeletonStats count={5} className="grid grid-cols-2 md:grid-cols-5 gap-3" />
+                <Skeleton className="h-10 w-full" />
+                <SkeletonList rows={6} lines={1} />
+            </div>
+        );
+    }
 
     return (
         <div className="max-w-5xl mx-auto space-y-5">

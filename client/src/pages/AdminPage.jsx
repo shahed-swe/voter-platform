@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import PageHeader from '../components/PageHeader.jsx';
-import { LoadingState, ErrorState, EmptyState, Spinner } from '../components/LoadingState.jsx';
+import { SkeletonTable, ErrorState, EmptyState, Spinner } from '../components/LoadingState.jsx';
 import useApi from '../hooks/useApi.js';
 import * as adminApi from '../api/admin.js';
 import { useAuth } from '../auth/AuthContext.jsx';
@@ -151,7 +151,7 @@ export default function AdminPage() {
 
             <div className="card overflow-x-auto p-0">
                 {loading ? (
-                    <LoadingState />
+                    <SkeletonTable rows={7} cols={6} />
                 ) : error ? (
                     <ErrorState error={error} onRetry={refetch} />
                 ) : data?.users?.length ? (

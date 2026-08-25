@@ -123,7 +123,7 @@ export default function RuralDashboard() {
         return null;
     }, [filters, villagesGeo]);
 
-    if (loading) return <LoadingState />;
+    if (loading) return <LoadingState full />;
     if (error)   return <ErrorState error={error} onRetry={() => window.location.reload()} />;
 
     return (

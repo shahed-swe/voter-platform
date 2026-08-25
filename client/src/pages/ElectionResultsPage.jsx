@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import PageHeader from '../components/PageHeader.jsx';
-import { LoadingState, ErrorState, EmptyState } from '../components/LoadingState.jsx';
+import { SkeletonCard, SkeletonTable, ErrorState, EmptyState } from '../components/LoadingState.jsx';
 import useApi from '../hooks/useApi.js';
 import * as votersApi from '../api/voters.js';
 import * as analyticsApi from '../api/analytics.js';
@@ -16,7 +16,15 @@ export default function ElectionResultsPage() {
     );
     const { data, loading, error, refetch } = useApi(fetch, []);
 
-    if (loading) return <LoadingState />;
+    if (loading) {
+        return (
+            <>
+                <PageHeader title="Election results" subtitle="Aggregated support distribution and area-level breakdown" />
+                <div className="mb-6"><SkeletonCard bodyClass="h-40" /></div>
+                <div className="card p-0"><SkeletonTable rows={8} cols={5} /></div>
+            </>
+        );
+    }
     if (error) return <ErrorState error={error} onRetry={refetch} />;
 
     const [sup, agg] = data;

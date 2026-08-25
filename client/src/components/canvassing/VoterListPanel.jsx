@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import VoterCard from './VoterCard.jsx';
 import * as votersApi from '../../api/voters.js';
-import { LoadingState, EmptyState, ErrorState } from '../LoadingState.jsx';
+import { SkeletonList, EmptyState, ErrorState } from '../LoadingState.jsx';
 
 const BN_DIGITS = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
 const toBn = (s) => String(s ?? '').replace(/[0-9]/g, (d) => BN_DIGITS[+d]);
@@ -156,7 +156,7 @@ export default function VoterListPanel({ scopeAreas, scopeLabel, building, onCle
                 {!hasScope ? (
                     <EmptyState icon="fa-location-dot" label="Pick a voter area from the left to load voters." />
                 ) : loading ? (
-                    <LoadingState />
+                    <SkeletonList rows={5} lines={3} />
                 ) : error ? (
                     <ErrorState error={error} />
                 ) : data.voters.length === 0 ? (

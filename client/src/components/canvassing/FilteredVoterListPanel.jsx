@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import VoterCard from './VoterCard.jsx';
 import * as votersApi from '../../api/voters.js';
 import { voterSearchTerms } from '../../utils/avroPhonetic.js';
-import { LoadingState, EmptyState, ErrorState } from '../LoadingState.jsx';
+import { SkeletonList, EmptyState, ErrorState } from '../LoadingState.jsx';
 
 const BN_DIGITS = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
 const toBn = (s) => String(s ?? '').replace(/[0-9]/g, (d) => BN_DIGITS[+d]);
@@ -228,7 +228,7 @@ export default function FilteredVoterListPanel({ filters, scope, scopeLabel, onP
                 {!hasScope ? (
                     <EmptyState icon="fa-location-dot" label="একটি ওয়ার্ড নির্বাচন করুন।" />
                 ) : loading ? (
-                    <LoadingState />
+                    <SkeletonList rows={5} lines={3} />
                 ) : error ? (
                     <ErrorState error={error} />
                 ) : voters.length === 0 ? (

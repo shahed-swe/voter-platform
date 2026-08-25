@@ -10,7 +10,7 @@ import autoTable from 'jspdf-autotable';
 import PageHeader from '../components/PageHeader.jsx';
 import StatCard from '../components/StatCard.jsx';
 import MultiSelect from '../components/MultiSelect.jsx';
-import { LoadingState, ErrorState } from '../components/LoadingState.jsx';
+import { SkeletonStats, SkeletonCard, ErrorState } from '../components/LoadingState.jsx';
 import { useAuth } from '../auth/AuthContext.jsx';
 import * as analyticsApi from '../api/analytics.js';
 import * as votersApi from '../api/voters.js';
@@ -239,7 +239,17 @@ export default function AnalyticsPage() {
                 </div>
             </div>
 
-            {loading && !data ? <LoadingState /> : error ? <ErrorState error={error} /> : (
+            {loading && !data ? (
+                <>
+                    <div className="mb-5"><SkeletonStats /></div>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
+                        <SkeletonCard /><SkeletonCard />
+                    </div>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                        <SkeletonCard bodyClass="h-40" /><SkeletonCard bodyClass="h-40" />
+                    </div>
+                </>
+            ) : error ? <ErrorState error={error} /> : (
                 <>
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
                         <StatCard label="Total voters"      value={num(overview.total_voters)}     icon="fa-users"           tone="brand"   />
@@ -250,9 +260,11 @@ export default function AnalyticsPage() {
 
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
                         <div className="card"><h3 className="card-title">Support distribution</h3>
-                            <Doughnut ref={supportRef} data={charts.support} options={{ plugins: { legend: { position: 'bottom' } } }} /></div>
+                            <div className="mx-auto w-full max-w-xs">
+                                <Doughnut ref={supportRef} data={charts.support} options={{ plugins: { legend: { position: 'bottom' } } }} /></div></div>
                         <div className="card"><h3 className="card-title">Income distribution</h3>
-                            <Doughnut data={charts.income} options={{ plugins: { legend: { position: 'bottom' } } }} /></div>
+                            <div className="mx-auto w-full max-w-xs">
+                                <Doughnut data={charts.income} options={{ plugins: { legend: { position: 'bottom' } } }} /></div></div>
                     </div>
 
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">

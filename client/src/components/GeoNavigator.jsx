@@ -85,6 +85,7 @@ export default function GeoNavigator({ candidateId, value, onChange }) {
                         value={wards}
                         onChange={setWards}
                         loading={loadingW}
+                        loadingLabel="ওয়ার্ড লোড হচ্ছে..."
                         placeholder="সব ওয়ার্ড"
                         bn
                     />
@@ -95,21 +96,35 @@ export default function GeoNavigator({ candidateId, value, onChange }) {
                         Voter Area / Village <span className="text-gray-400 normal-case">(একটি)</span>
                     </label>
                     {/* Single-select: picking one area drills the map into that area's buildings. */}
-                    <select
-                        className="w-full border border-gray-300 rounded-md px-2.5 py-2 text-sm bg-white text-gray-800 focus:outline-none focus:ring-1 focus:ring-brand focus:border-brand disabled:bg-gray-50 disabled:text-gray-400 bn"
-                        value={areas[0] || ''}
-                        onChange={(e) => setAreas(e.target.value ? [e.target.value] : [])}
-                        disabled={wards.length === 0 || loadingA}
-                    >
-                        <option value="">
-                            {wards.length === 0 ? 'আগে ওয়ার্ড নির্বাচন করুন' : loadingA ? 'লোড হচ্ছে…' : 'সব এলাকা'}
-                        </option>
-                        {areaOpts.map((o) => (
-                            <option key={o.value} value={o.value}>
-                                {o.label}{o.count ? ` (${toBn(o.count)})` : ''}
+                    <div className="relative">
+                        <select
+                            aria-busy={loadingA}
+                            className={`w-full border rounded-md px-2.5 py-2 text-sm text-gray-800 focus:outline-none focus:ring-1 focus:ring-brand focus:border-brand bn ${
+                                loadingA
+                                    ? 'border-brand/30 bg-brand/5 text-gray-600 cursor-wait'
+                                    : 'border-gray-300 bg-white disabled:bg-gray-50 disabled:text-gray-400'
+                            }`}
+                            value={areas[0] || ''}
+                            onChange={(e) => setAreas(e.target.value ? [e.target.value] : [])}
+                            disabled={wards.length === 0 || loadingA}
+                        >
+                            <option value="">
+                                {wards.length === 0
+                                    ? 'আগে ওয়ার্ড নির্বাচন করুন'
+                                    : loadingA
+                                        ? 'ভোটার এলাকা লোড হচ্ছে...'
+                                        : 'সব এলাকা'}
                             </option>
-                        ))}
-                    </select>
+                            {areaOpts.map((o) => (
+                                <option key={o.value} value={o.value}>
+                                    {o.label}{o.count ? ` (${toBn(o.count)})` : ''}
+                                </option>
+                            ))}
+                        </select>
+                        {loadingA && (
+                            <span className="pointer-events-none absolute right-8 top-1/2 -translate-y-1/2 h-3.5 w-3.5 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+                        )}
+                    </div>
                 </div>
 
                 {(wards.length > 0 || areas.length > 0) && (

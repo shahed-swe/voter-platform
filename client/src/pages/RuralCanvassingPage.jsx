@@ -99,7 +99,7 @@ export default function RuralCanvassingPage() {
         return parts.length ? parts.join(' › ') : '';
     }, [filters, villagesGeo]);
 
-    if (loading) return <LoadingState />;
+    if (loading) return <LoadingState full />;
     if (error)   return <ErrorState error={error} onRetry={() => window.location.reload()} />;
 
     const fitFeatures = matchedFeatures.length ? matchedFeatures : (villagesGeo?.features || []);

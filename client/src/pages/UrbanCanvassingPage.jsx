@@ -235,7 +235,7 @@ export default function UrbanCanvassingPage() {
         return wardsGeo?.features || [];
     }, [mode, wardIds, voterAreaIds, wardsGeo, voterAreasGeoAll]);
 
-    if (loadingBase) return <LoadingState />;
+    if (loadingBase) return <LoadingState full />;
     if (error)       return <ErrorState error={error} onRetry={() => window.location.reload()} />;
 
     return (
