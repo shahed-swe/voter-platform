@@ -39,6 +39,14 @@ const overlayPin = L.divIcon({
     iconAnchor: [8, 16],
 });
 
+// Small indigo dot for every located (canvassed) voter in the selected scope.
+const voterDotIcon = L.divIcon({
+    className: '',
+    html: '<div style="width:14px;height:14px;border-radius:50%;background:#4f46e5;border:2px solid #fff;box-shadow:0 1px 4px rgba(79,70,229,0.6)"></div>',
+    iconSize: [14, 14],
+    iconAnchor: [7, 7],
+});
+
 // Pulsing blue dot for the canvasser's own live location (#8).
 const myLocationIcon = L.divIcon({
     className: '',
@@ -109,6 +117,16 @@ function styleFor(layerSpec, feature) {
     };
 }
 
+// Fly to a point (the voter picked from the list) without changing the drill state.
+function FlyTo({ position }) {
+    const map = useMap();
+    useEffect(() => {
+        if (!position) return;
+        map.flyTo(position, Math.max(map.getZoom(), 17), { duration: 0.8 });
+    }, [position?.[0], position?.[1]]); // eslint-disable-line react-hooks/exhaustive-deps
+    return null;
+}
+
 // Auto-fit to whatever features are visible
 function FitTo({ features }) {
     const map = useMap();
@@ -142,6 +160,8 @@ export default function DynamicMap({
     onLeafClick,         // optional: ({wardLabel, feature}) => void — fired when a 'voters' leaf is clicked
     pinnedVoter,         // optional: voter object to show as a map pin at the ward centre
     onPinnedVoterClick,  // optional: () => void — fired when the voter pin is clicked
+    voterPins,           // optional: voters with canvass_latitude/longitude — ALL shown as pins
+    selectedFeatureId,   // optional: feature_id in the deepest layer (e.g. a clicked building) to highlight
     allowedWards,        // optional: string[] (Bengali digits) — restrict the ward layer to these wards only
     focusWards,          // optional: string[] (Bengali digits) — highlight + fit the map to these wards
     focusAreaName,       // optional: a single selected voter_area_name — drill straight to its buildings
@@ -390,6 +410,36 @@ export default function DynamicMap({
         return null;
     }, [pinnedVoter?.voter_id, JSON.stringify(drillStack.map((s) => s.id)), dataByLayer]); // eslint-disable-line react-hooks/exhaustive-deps
 
+    // Voters canvassed at the same building all carry that building's centroid, so
+    // their pins would stack exactly and hide each other. Group pins by (~1m) cell
+    // and lay co-located groups out in a small ring (~7m radius) around the shared
+    // point — every voter stays visible and individually clickable.
+    const spreadVoterPins = useMemo(() => {
+        const groups = new Map();
+        for (const v of voterPins || []) {
+            const lat = Number(v.canvass_latitude);
+            const lng = Number(v.canvass_longitude);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0)) continue;
+            const key = `${lat.toFixed(5)},${lng.toFixed(5)}`;
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push({ ...v, _lat: lat, _lng: lng });
+        }
+        const out = [];
+        const R = 0.00006; // ≈ 6–7 m in latitude degrees
+        for (const group of groups.values()) {
+            if (group.length === 1) { out.push(group[0]); continue; }
+            group.forEach((v, i) => {
+                const angle = (2 * Math.PI * i) / group.length;
+                out.push({
+                    ...v,
+                    _lat: v._lat + R * Math.sin(angle),
+                    _lng: v._lng + (R * Math.cos(angle)) / Math.cos((v._lat * Math.PI) / 180),
+                });
+            });
+        }
+        return out;
+    }, [voterPins]);
+
     function onFeatureClick(spec, feature) {
         const action = spec.click || 'drill';
         if (action.startsWith('modal:')) {
@@ -399,8 +449,12 @@ export default function DynamicMap({
         if (action === 'select') return;
         if (action === 'voters') {
             // Leaf layer (building) — fire parent callback with the ward context from drillStack
-            // drillStack = [{constituency}, {ward}, {village}]; ward is index 1
+            // drillStack = [{constituency}, {ward}, {village}]; ward is index 1.
+            // NOTE: when the drill was driven by the GeoNavigator the ward entry only
+            // carries the generic layer label ("Ward") — the page must not rely on
+            // parsing it. areaLabel carries the selected voter area's name instead.
             const wardLabel = drillStack[1]?.label || null;
+            const areaLabel = drillStack[2]?.label || null;
             // Capture the building's id + centroid so the canvass can be tagged to
             // this building and reuse its geolocation for the voter (#4, #6).
             let center = null;
@@ -411,6 +465,7 @@ export default function DynamicMap({
             const p = feature.properties || {};
             onLeafClick?.({
                 wardLabel,
+                areaLabel,
                 feature: p,
                 building: {
                     building_id:   p.feature_id ?? null,
@@ -480,7 +535,10 @@ export default function DynamicMap({
                     const isDeepest = i === visibleCount - 1;
                     return (
                         <GeoJSON
-                            key={`${spec.id}-${i === 0 ? 'root' : drillStack[i - 1]?.id}-${data.features.length}`}
+                            // selectedFeatureId is part of the key: GeoJSON styles are
+                            // applied at mount, so remount the (small) deepest layer to
+                            // repaint the selection highlight.
+                            key={`${spec.id}-${i === 0 ? 'root' : drillStack[i - 1]?.id}-${data.features.length}${isDeepest && selectedFeatureId != null ? `-sel${selectedFeatureId}` : ''}`}
                             data={data}
                             // Some layers mix polygons with Point features (e.g. a
                             // handful of point-only buildings). Render points as styled
@@ -496,6 +554,14 @@ export default function DynamicMap({
                             }}
                             style={(f) => {
                                 const s = styleFor(spec, f);
+                                // Selected building (or other leaf feature) — amber highlight
+                                if (
+                                    isDeepest &&
+                                    selectedFeatureId != null &&
+                                    String(f.properties?.feature_id) === String(selectedFeatureId)
+                                ) {
+                                    return { ...s, color: '#E65100', weight: 3, fillColor: '#FFB300', fillOpacity: 0.7 };
+                                }
                                 return isDeepest
                                     ? s
                                     // Parent layers are kept as visual context — dim them
@@ -546,6 +612,30 @@ export default function DynamicMap({
                     });
                 })}
 
+                {/* All located voters in the selected scope — one dot each. Voters
+                    canvassed at the same building share identical coordinates, so
+                    co-located pins are spread into a small ring — otherwise they
+                    stack and only the newest voter appears. The focused voter keeps
+                    the big teardrop pin below instead. */}
+                {spreadVoterPins.map((v) => {
+                    if (pinnedVoter?.voter_id === v.voter_id) return null;
+                    return (
+                        <Marker
+                            key={`vloc-${v.voter_id}`}
+                            position={[v._lat, v._lng]}
+                            icon={voterDotIcon}
+                            eventHandlers={{ click: () => onPinnedVoterClick?.(v) }}
+                        >
+                            <Tooltip direction="top" offset={[0, -8]} opacity={1}>
+                                <span className="text-xs font-semibold bn">{v.name || v.voter_id}</span>
+                                {v.voter_area_name && (
+                                    <span className="block text-[10px] text-gray-500 bn">{v.voter_area_name}</span>
+                                )}
+                            </Tooltip>
+                        </Marker>
+                    );
+                })}
+
                 {/* Voter pin — shown when a voter has been selected from the list */}
                 {pinnedWardCenter && pinnedVoter && (
                     <Marker
@@ -559,6 +649,15 @@ export default function DynamicMap({
                         </Tooltip>
                     </Marker>
                 )}
+
+                {/* Focus the map on the picked voter when they have an exact canvassed location */}
+                {pinnedVoter && (() => {
+                    const lat = Number(pinnedVoter.canvass_latitude);
+                    const lng = Number(pinnedVoter.canvass_longitude);
+                    return Number.isFinite(lat) && Number.isFinite(lng) && (lat !== 0 || lng !== 0)
+                        ? <FlyTo position={[lat, lng]} />
+                        : null;
+                })()}
 
                 {/* Canvasser's own live location (#8) */}
                 {myLocation && (

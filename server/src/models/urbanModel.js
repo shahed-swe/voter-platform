@@ -78,7 +78,9 @@ async function canvassedVotersForBuilding(candidateId, buildingId) {
            FROM canvassing c
            JOIN voters v ON v.voter_id = c.voter_id
            LEFT JOIN users u ON u.user_id = c.user_id
-          WHERE c.candidate_id = $1 AND c.building_id = $2
+          WHERE c.candidate_id = $1
+            -- geo buildings use TEXT feature ids ("way/…"); legacy rows a numeric id
+            AND (c.building_feature_id = $2::text OR c.building_id::text = $2::text)
           ORDER BY c.canvass_date DESC`,
         [candidateId, buildingId]
     );

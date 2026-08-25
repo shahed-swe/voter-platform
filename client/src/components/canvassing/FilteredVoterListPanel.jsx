@@ -46,6 +46,8 @@ export default function FilteredVoterListPanel({ filters, scope, scopeLabel, onP
     const [loadingMore, setLoadingMore] = useState(false);
     const [error, setError]             = useState(null);
 
+    console.log(voters,'this is the voters data')
+
     // fetchSpec drives all API calls.
     // replace:true  → clear list and load from offset 0
     // replace:false → append next page to existing list

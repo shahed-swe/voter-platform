@@ -42,6 +42,39 @@ async function allLocations(req, res) {
     res.json({ success: true, locations: rows });
 }
 
+/**
+ * POST /api/canvassing/voter-locations
+ * Body: { scope: { ward: [..], voter_area: [..] } } (values may be a string or array)
+ * Returns every voter in the scope whose latest canvass carries a geolocation —
+ * the canvassing map shows them all as pins at once.
+ */
+async function voterLocations(req, res) {
+    const { scope = {} } = req.body || {};
+    const toArr = (v) => (v == null || v === '' ? null : (Array.isArray(v) ? v : [v]).filter(Boolean));
+    let wards = toArr(scope.ward);
+    let areas = toArr(scope.voter_area);
+
+    // Same volunteer restrictions as the voter list (#12): only allowed wards /
+    // voter areas may be requested; no scope defaults to everything they hold.
+    const allowedWards = req.user?.allowed_wards;
+    if (allowedWards?.length) {
+        wards = wards ? wards.filter((w) => allowedWards.includes(w)) : allowedWards;
+        if (!wards.length) throw new ForbiddenError('Ward not in your allowed wards');
+    }
+    const allowedAreas = req.user?.allowed_voter_areas;
+    if (allowedAreas?.length) {
+        areas = areas ? areas.filter((a) => allowedAreas.includes(a)) : allowedAreas;
+        if (!areas.length) throw new ForbiddenError('Voter area not in your allowed areas');
+    }
+
+    const rows = await canvassingModel.voterLocationsByScope(tenant(req), {
+        wards,
+        voterAreas: areas,
+        politicalCandidateId: pcId(req),
+    });
+    res.json({ success: true, voters: rows });
+}
+
 async function voterRecords(req, res) {
     const rows = await canvassingModel.listVoterRecords(tenant(req), {
         limit: parseInt(req.query.limit || 200, 10),
@@ -61,6 +94,7 @@ module.exports = {
     history,
     locationsByVillage,
     allLocations,
+    voterLocations,
     voterRecords,
     stats,
 };
