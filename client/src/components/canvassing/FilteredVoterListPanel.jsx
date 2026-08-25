@@ -36,8 +36,9 @@ const PAGE_SIZE = 10;
  *   scopeLabel  — display label for the header
  *   onPickVoter — callback when a voter card is clicked
  *   refreshKey  — increment to force reload without changing scope/filters
+ *   buildingFilter — geo building feature_id: only voters canvassed at that building
  */
-export default function FilteredVoterListPanel({ filters, scope, scopeLabel, onPickVoter, refreshKey = 0 }) {
+export default function FilteredVoterListPanel({ filters, scope, scopeLabel, onPickVoter, refreshKey = 0, buildingFilter = null }) {
     const [query, setQuery]             = useState('');
     const [status, setStatus]           = useState('');
     const [voters, setVoters]           = useState([]);
@@ -75,11 +76,12 @@ export default function FilteredVoterListPanel({ filters, scope, scopeLabel, onP
             status:  status  || undefined,
             search:  terms.search,
             search_bn: terms.search_bn,
+            building_feature_id: buildingFilter || undefined,
             offset:  0,
             replace: true,
         });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [JSON.stringify(filters), JSON.stringify(scope), status, dQuery, hasScope, refreshKey]);
+    }, [JSON.stringify(filters), JSON.stringify(scope), status, dQuery, hasScope, refreshKey, buildingFilter]);
 
     // Execute whichever fetch is queued
     useEffect(() => {
@@ -95,6 +97,7 @@ export default function FilteredVoterListPanel({ filters, scope, scopeLabel, onP
             status:    fetchSpec.status,
             search:    fetchSpec.search,
             search_bn: fetchSpec.search_bn,
+            building_feature_id: fetchSpec.building_feature_id,
             limit:     PAGE_SIZE,
             offset:    fetchSpec.offset,
         })
@@ -128,6 +131,7 @@ export default function FilteredVoterListPanel({ filters, scope, scopeLabel, onP
             status:  status  || undefined,
             search:  terms.search,
             search_bn: terms.search_bn,
+            building_feature_id: buildingFilter || undefined,
             offset:  voters.length,
         };
 
@@ -144,7 +148,7 @@ export default function FilteredVoterListPanel({ filters, scope, scopeLabel, onP
         return () => observer.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [hasMore, loading, loadingMore, voters.length,
-        JSON.stringify(filters), JSON.stringify(scope), status, dQuery]);
+        JSON.stringify(filters), JSON.stringify(scope), status, dQuery, buildingFilter]);
 
     const remaining = (stats.total || 0) - (stats.visited || 0);
 

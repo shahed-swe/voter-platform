@@ -162,6 +162,7 @@ export default function DynamicMap({
     onPinnedVoterClick,  // optional: () => void — fired when the voter pin is clicked
     voterPins,           // optional: voters with canvass_latitude/longitude — ALL shown as pins
     selectedFeatureId,   // optional: feature_id in the deepest layer (e.g. a clicked building) to highlight
+    refreshKey = 0,      // optional: bump to refetch the drilled layer (new building names / canvassed colors after a submit)
     allowedWards,        // optional: string[] (Bengali digits) — restrict the ward layer to these wards only
     focusWards,          // optional: string[] (Bengali digits) — highlight + fit the map to these wards
     focusAreaName,       // optional: a single selected voter_area_name — drill straight to its buildings
@@ -296,7 +297,9 @@ export default function DynamicMap({
             .catch((err) => !cancelled && setError(err))
             .finally(() => !cancelled && setLoading(false));
         return () => { cancelled = true; };
-    }, [JSON.stringify(drillStack.map((s) => s.id)), candidateId]); // eslint-disable-line react-hooks/exhaustive-deps
+    // refreshKey: a canvass submit updates building names + canvassed colors server-side —
+    // refetch the drilled layer so the map reflects them without re-drilling.
+    }, [JSON.stringify(drillStack.map((s) => s.id)), candidateId, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // A single selected voter area that maps to a geo village — the area drill
     // (below) owns the map in that case, so the ward drill must stand down.
@@ -535,10 +538,12 @@ export default function DynamicMap({
                     const isDeepest = i === visibleCount - 1;
                     return (
                         <GeoJSON
-                            // selectedFeatureId is part of the key: GeoJSON styles are
-                            // applied at mount, so remount the (small) deepest layer to
-                            // repaint the selection highlight.
-                            key={`${spec.id}-${i === 0 ? 'root' : drillStack[i - 1]?.id}-${data.features.length}${isDeepest && selectedFeatureId != null ? `-sel${selectedFeatureId}` : ''}`}
+                            // selectedFeatureId + refreshKey are part of the key: GeoJSON
+                            // styles/tooltips are applied at mount, so remount the (small)
+                            // layer to repaint the selection highlight and refreshed data
+                            // (an unchanged feature COUNT would otherwise keep stale
+                            // tooltips even after a refetch).
+                            key={`${spec.id}-${i === 0 ? 'root' : drillStack[i - 1]?.id}-${data.features.length}-r${refreshKey}${isDeepest && selectedFeatureId != null ? `-sel${selectedFeatureId}` : ''}`}
                             data={data}
                             // Some layers mix polygons with Point features (e.g. a
                             // handful of point-only buildings). Render points as styled

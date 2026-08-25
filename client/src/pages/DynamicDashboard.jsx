@@ -5,6 +5,7 @@ import GeoNavigator from '../components/GeoNavigator.jsx';
 import FilteredVoterListPanel from '../components/canvassing/FilteredVoterListPanel.jsx';
 import CanvassFormModal from '../components/canvassing/CanvassFormModal.jsx';
 import * as votersApi from '../api/voters.js';
+import * as canvassingApi from '../api/canvassing.js';
 import { useAuth } from '../auth/AuthContext.jsx';
 import { wardLabelToScope } from '../utils/geoScope.js';
 
@@ -49,6 +50,20 @@ export default function DynamicDashboard() {
         setPinnedVoter(null);
     }, [JSON.stringify(navScope)]);
 
+    // All voters in the selected ward/area whose latest canvass has a geolocation —
+    // shown together as pins (same behaviour as /canvassing). Refreshes after each
+    // canvass submit via listRefreshKey.
+    const [voterPins, setVoterPins] = useState([]);
+    useEffect(() => {
+        if (!Object.keys(wardScope).length) { setVoterPins([]); return; }
+        let cancelled = false;
+        canvassingApi
+            .voterLocations({ scope: wardScope })
+            .then((d) => !cancelled && setVoterPins(d.voters || []))
+            .catch(() => !cancelled && setVoterPins([]));
+        return () => { cancelled = true; };
+    }, [JSON.stringify(wardScope), candidate?.candidate_id, listRefreshKey]);
+
     // Always load stats — including the initial whole-constituency view (no ward /
     // no filter). `stats_only` skips the voter list so the constituency-wide count
     // is fast. (#15: dashboard used to show 0 until an area was picked.)
@@ -92,6 +107,8 @@ export default function DynamicDashboard() {
                 onLeafClick={handleLeafClick}
                 pinnedVoter={pinnedVoter}
                 onPinnedVoterClick={(v) => setActiveVoter(v)}
+                voterPins={voterPins}
+                refreshKey={listRefreshKey}
                 allowedWards={allowedWards}
                 focusWards={navScope.ward}
                 focusAreaName={navScope.voter_area?.length === 1 ? navScope.voter_area[0] : null}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import * as canvassingApi from '../../api/canvassing.js';
 import * as votersApi from '../../api/voters.js';
+import * as urbanApi from '../../api/urban.js';
 import { voterSearchTerms } from '../../utils/avroPhonetic.js';
 import { Spinner } from '../LoadingState.jsx';
 
@@ -78,6 +79,32 @@ export default function CanvassFormModal({ voter, building, onClose, onSubmitted
 
     const addMember = (v) => { setFamily((f) => [...f, v]); setQ(''); setResults([]); };
     const removeMember = (id) => setFamily((f) => f.filter((v) => v.voter_id !== id));
+
+    // Suggest household members: voters already canvassed at this building are
+    // likely the same family — offer them as one-tap additions.
+    const [suggested, setSuggested] = useState([]);
+    useEffect(() => {
+        if (!building?.building_id) { setSuggested([]); return; }
+        let cancelled = false;
+        urbanApi
+            .canvassedVotersForBuilding(building.building_id)
+            .then((res) => {
+                if (cancelled) return;
+                const seen = new Set();
+                const rows = [];
+                for (const c of res.voters || []) {
+                    if (!c.voter_id || seen.has(c.voter_id)) continue;
+                    seen.add(c.voter_id);
+                    rows.push({ voter_id: c.voter_id, name: c.voter_name, sos_vid: c.sos_vid });
+                }
+                setSuggested(rows);
+            })
+            .catch(() => !cancelled && setSuggested([]));
+        return () => { cancelled = true; };
+    }, [building?.building_id]);
+
+    const familyIds = new Set([voter.voter_id, ...family.map((f) => f.voter_id)]);
+    const visibleSuggestions = suggested.filter((s) => !familyIds.has(s.voter_id));
 
     const update = (k) => (e) =>
         setForm((f) => ({
@@ -157,7 +184,9 @@ export default function CanvassFormModal({ voter, building, onClose, onSubmitted
             for (const t of targets) {
                 await canvassingApi.submit({ ...shared, voter_id: t.voter_id });
             }
-            onSubmitted();
+            // Let the page know what was saved (e.g. a typed building name that the
+            // server wrote back to the geo layer).
+            onSubmitted({ building_name: (shared.building_name || '').trim() || null });
         } catch (err) {
             setError(err.response?.data?.error || err.message);
         } finally {
@@ -310,6 +339,28 @@ export default function CanvassFormModal({ voter, building, onClose, onSubmitted
                                         </button>
                                     </span>
                                 ))}
+                            </div>
+                        )}
+                        {/* One-tap suggestions: voters already canvassed at this building */}
+                        {visibleSuggestions.length > 0 && (
+                            <div className="mt-2">
+                                <p className="text-[11px] text-gray-500 bn mb-1">
+                                    <i className="fas fa-house-user mr-1 text-gray-400" />
+                                    এই ভবনে আগে জরিপকৃত — যোগ করতে ট্যাপ করুন:
+                                </p>
+                                <div className="flex flex-wrap gap-1.5">
+                                    {visibleSuggestions.map((s) => (
+                                        <button
+                                            key={s.voter_id}
+                                            type="button"
+                                            onClick={() => addMember(s)}
+                                            className="flex items-center gap-1 bg-white border border-brand/40 text-brand text-xs px-2 py-1 rounded-full bn hover:bg-brand/5"
+                                        >
+                                            <i className="fas fa-plus text-[10px]" />
+                                            {s.name}
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
                         )}
                         <p className="text-[11px] text-gray-400 mt-1.5 bn">

@@ -24,6 +24,7 @@ export default function DynamicCanvassing() {
     const [flash, setFlash]                 = useState(null);
     const [buildingScope, setBuildingScope] = useState(null);
     const [buildingCtx, setBuildingCtx]     = useState(null); // clicked building (id + centroid) for canvass tagging
+    const [buildingOnly, setBuildingOnly]   = useState(false); // list shows only voters canvassed at buildingCtx
     const [listRefreshKey, setListRefreshKey] = useState(0);
     const [mobilePanel, setMobilePanel]     = useState(null); // null | 'nav' | 'list' — mobile-only panel toggle
 
@@ -48,6 +49,7 @@ export default function DynamicCanvassing() {
     useEffect(() => {
         setBuildingScope(null);
         setBuildingCtx(null);
+        setBuildingOnly(false);
     }, [JSON.stringify(navScope)]);
 
     // Clear pin whenever navigation changes (ward, voter area, or building)
@@ -78,9 +80,12 @@ export default function DynamicCanvassing() {
         // ward. Navigator-driven drills carry a generic "Ward" label that can't be
         // parsed — the GeoNavigator scope already narrows the list there, so the
         // click still counts: it selects the building (highlight + canvass tagging).
+        // NO refreshKey bump here: a building click changes no list data by itself,
+        // and the fetches already re-run on their own deps (scope change → list;
+        // buildingFilter change → building-only list). Bumping it refetched the
+        // list + stats + pins on every single building click for nothing.
         const s = wardLabelToScope(wardLabel);
         if (s) setBuildingScope(s);
-        setListRefreshKey((k) => k + 1);
         setBuildingCtx(building || null);
     }
 
@@ -110,6 +115,7 @@ export default function DynamicCanvassing() {
                     onPinnedVoterClick={(v) => setActiveVoter(v)}
                     voterPins={voterPins}
                     selectedFeatureId={buildingCtx?.building_id ?? null}
+                    refreshKey={listRefreshKey}
                     allowedWards={allowedWards}
                     focusWards={navScope.ward}
                     focusAreaName={navScope.voter_area?.length === 1 ? navScope.voter_area[0] : null}
@@ -142,8 +148,13 @@ export default function DynamicCanvassing() {
                 <FilteredVoterListPanel
                     filters={filters}
                     scope={geoScope}
-                    scopeLabel={scopeLabel}
+                    scopeLabel={
+                        buildingOnly && buildingCtx
+                            ? (buildingCtx.building_name || 'নির্বাচিত ভবন')
+                            : scopeLabel
+                    }
                     refreshKey={listRefreshKey}
+                    buildingFilter={buildingOnly ? (buildingCtx?.building_id ?? null) : null}
                     onPickVoter={(v) => { setPinnedVoter(v); setActiveVoter(v); }}
                 />
             </aside>
@@ -181,9 +192,22 @@ export default function DynamicCanvassing() {
                     <span className="bn font-medium truncate max-w-[220px]">
                         {buildingCtx.building_name || `ভবন #${buildingCtx.building_id}`}
                     </span>
+                    {buildingCtx.building_id != null && (
+                        <button
+                            className={`bn text-xs font-medium px-2 py-0.5 rounded-full border transition-colors ${
+                                buildingOnly
+                                    ? 'bg-amber-600 text-white border-amber-600'
+                                    : 'bg-white text-amber-700 border-amber-400 hover:bg-amber-100'
+                            }`}
+                            onClick={() => setBuildingOnly((v) => !v)}
+                            title="Show only this building's canvassed voters"
+                        >
+                            এই ভবনের ভোটার
+                        </button>
+                    )}
                     <button
                         className="text-amber-500 hover:text-amber-800"
-                        onClick={() => setBuildingCtx(null)}
+                        onClick={() => { setBuildingCtx(null); setBuildingOnly(false); }}
                         title="Clear selected building"
                     >
                         <i className="fas fa-times" />
@@ -211,10 +235,15 @@ export default function DynamicCanvassing() {
                     voter={activeVoter}
                     building={buildingCtx}
                     onClose={() => setActiveVoter(null)}
-                    onSubmitted={() => {
+                    onSubmitted={(saved) => {
                         setFlash(`Saved canvass for ${activeVoter.name}`);
                         setActiveVoter(null);
                         setPinnedVoter(null);
+                        // A typed building name is written to the geo layer on submit —
+                        // reflect it on the selection chip right away too.
+                        if (saved?.building_name && buildingCtx && !buildingCtx.building_name) {
+                            setBuildingCtx({ ...buildingCtx, building_name: saved.building_name });
+                        }
                         // Force the voter list to refetch so the row status + counts
                         // update immediately (no manual refresh). (#3)
                         setListRefreshKey((k) => k + 1);

@@ -99,7 +99,7 @@ async function aggregatedStats(req, res) {
  */
 async function filtered(req, res) {
     const candidateId = tenant(req);
-    const { filters = {}, scope = {}, status, search, search_bn, limit, offset, stats_only } = req.body || {};
+    const { filters = {}, scope = {}, status, search, search_bn, limit, offset, stats_only, building_feature_id } = req.body || {};
 
     // Validate user-facing filter keys against filter_config
     const candidate = await candidateModel.findById(candidateId);
@@ -154,6 +154,7 @@ async function filtered(req, res) {
         offset: offset ? parseInt(offset, 10) : 0,
         politicalCandidateId: req.user?.political_candidate_id || null,
         statsOnly: !!stats_only,
+        buildingFeatureId: building_feature_id || null,
     });
     res.json({ success: true, ...result });
 }
