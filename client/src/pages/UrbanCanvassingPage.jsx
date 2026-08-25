@@ -383,7 +383,7 @@ export default function UrbanCanvassingPage() {
             </div>
 
             {/* Left filter panel */}
-            <aside className="absolute left-4 top-4 bottom-4 w-[280px] z-[400] space-y-3 overflow-y-auto pr-1">
+            <aside className="absolute left-4 top-4 bottom-4 w-[min(85vw,280px)] z-[400] space-y-3 overflow-y-auto pr-1">
                 <WardMultiSelect
                     wards={(wardsGeo?.features || []).map((f) => ({
                         ward_id: String(f.properties.ward_id),
@@ -406,7 +406,7 @@ export default function UrbanCanvassingPage() {
             </aside>
 
             {/* Right voter list panel */}
-            <aside className="absolute right-4 top-4 bottom-4 w-[380px] z-[400]">
+            <aside className="absolute right-4 top-4 bottom-4 w-[min(94vw,380px)] z-[400]">
                 <VoterListPanel
                     scopeAreas={scopeAreas}
                     scopeLabel={scopeLabel}

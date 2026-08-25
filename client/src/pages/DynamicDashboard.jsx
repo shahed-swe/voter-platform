@@ -161,7 +161,8 @@ export default function DynamicDashboard() {
 
             {/* Pinned voter indicator */}
             {pinnedVoter && !activeVoter && (
-                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[600] bg-indigo-600 text-white rounded-full px-4 py-2 text-sm shadow-lg flex items-center gap-2">
+                // bottom-20 on mobile: clears the এলাকা/ফিল্টার toggle at bottom-3
+                <div className="absolute bottom-20 lg:bottom-4 left-1/2 -translate-x-1/2 z-[600] max-w-[94vw] bg-indigo-600 text-white rounded-full px-4 py-2 text-sm shadow-lg flex items-center gap-2 whitespace-nowrap">
                     <i className="fas fa-map-pin" />
                     <span className="font-medium truncate max-w-[180px]">{pinnedVoter.name}</span>
                     <span className="text-indigo-200 text-xs">— click pin to open</span>
@@ -181,7 +182,7 @@ export default function DynamicDashboard() {
                         className="absolute inset-0 bg-black/40"
                         onClick={() => setVoterModal(null)}
                     />
-                    <div className="relative z-10 w-[480px] h-[75vh] flex flex-col bg-white rounded-xl shadow-2xl overflow-hidden">
+                    <div className="relative z-10 w-[min(94vw,480px)] h-[75vh] flex flex-col bg-white rounded-xl shadow-2xl overflow-hidden">
                         <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between bg-brand/5">
                             <div>
                                 <div className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Voters</div>

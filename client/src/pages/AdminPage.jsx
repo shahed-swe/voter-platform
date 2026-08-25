@@ -32,7 +32,7 @@ function CreateUserModal({ onClose, onCreated }) {
 
     return (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+            <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[92vh] overflow-y-auto">
                 <div className="border-b border-gray-200 px-5 py-3 flex justify-between items-center">
                     <h3 className="font-semibold">Create user</h3>
                     <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
@@ -49,7 +49,7 @@ function CreateUserModal({ onClose, onCreated }) {
                         <label className="input-label">Full name</label>
                         <input className="input-field" required value={form.name} onChange={update('name')} />
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                             <label className="input-label">Username</label>
                             <input className="input-field" required value={form.username} onChange={update('username')} />

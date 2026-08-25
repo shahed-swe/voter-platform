@@ -160,12 +160,12 @@ export default function RuralCanvassingPage() {
             </div>
 
             {/* Left filter panel */}
-            <aside className="absolute left-4 top-4 bottom-4 w-[280px] z-[400] overflow-y-auto pr-1">
+            <aside className="absolute left-4 top-4 bottom-4 w-[min(85vw,280px)] z-[400] overflow-y-auto pr-1">
                 <DynamicFilterPanel config={cfg} value={filters} onChange={setFilters} />
             </aside>
 
             {/* Right voter list panel */}
-            <aside className="absolute right-4 top-4 bottom-4 w-[380px] z-[400]">
+            <aside className="absolute right-4 top-4 bottom-4 w-[min(94vw,380px)] z-[400]">
                 <FilteredVoterListPanel
                     filters={filters}
                     scopeLabel={scopeLabel}

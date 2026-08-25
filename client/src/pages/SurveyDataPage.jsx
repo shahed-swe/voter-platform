@@ -83,7 +83,7 @@ export default function SurveyDataPage() {
     if (records === null) return <LoadingState />;
 
     return (
-        <div className="p-6 max-w-5xl mx-auto space-y-5">
+        <div className="max-w-5xl mx-auto space-y-5">
             <div>
                 <h1 className="text-xl font-bold text-gray-900">Survey Data</h1>
                 <p className="text-sm text-gray-500 mt-0.5">

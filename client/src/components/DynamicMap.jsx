@@ -679,18 +679,21 @@ export default function DynamicMap({
             {/* Breadcrumb of drill state — only when NOT externally controlled
                 (GeoNavigator provides its own navigation in that case) */}
             {controlledDrill === undefined && drillStack.length > 0 && (
-                <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[500] bg-white rounded-md shadow-md border border-gray-200 px-3 py-1.5 text-sm flex items-center gap-1">
+                // Single-line breadcrumb: on phones it caps at the viewport and
+                // scrolls horizontally instead of wrapping into a tall block that
+                // collides with the selected-building chip below it.
+                <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[500] bg-white rounded-md shadow-md border border-gray-200 px-3 py-1.5 text-xs sm:text-sm flex items-center gap-1 max-w-[92vw] overflow-x-auto whitespace-nowrap">
                     <button
-                        className="text-brand hover:underline"
+                        className="text-brand hover:underline shrink-0"
                         onClick={() => setDrillStack([])}
                     >
                         {layersSpec[0]?.id}
                     </button>
                     {drillStack.map((s, i) => (
-                        <span key={i} className="flex items-center gap-1">
+                        <span key={i} className="flex items-center gap-1 shrink-0">
                             <i className="fas fa-chevron-right text-gray-300 text-xs" />
                             <button
-                                className={i === drillStack.length - 1 ? 'text-gray-700 font-medium' : 'text-brand hover:underline'}
+                                className={`bn max-w-[38vw] sm:max-w-none truncate ${i === drillStack.length - 1 ? 'text-gray-700 font-medium' : 'text-brand hover:underline'}`}
                                 onClick={() => setDrillStack((stack) => stack.slice(0, i + 1))}
                             >
                                 {s.label || s.id}

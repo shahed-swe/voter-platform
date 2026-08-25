@@ -66,7 +66,9 @@
         @apply bg-gray-50 text-xs font-semibold uppercase tracking-wider text-gray-600;
     }
     .data-table th, .data-table td {
-        @apply px-4 py-2 text-left;
+        /* whitespace-nowrap: on narrow screens the table scrolls inside its
+           overflow-x-auto card instead of crushing columns into letter-stacks */
+        @apply px-4 py-2 text-left whitespace-nowrap;
     }
     .data-table tbody tr:hover {
         @apply bg-gray-50;

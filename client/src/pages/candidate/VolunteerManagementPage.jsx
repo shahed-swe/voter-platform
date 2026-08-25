@@ -221,7 +221,7 @@ function AddVolunteerModal({ constituencyId, onClose, onAdded, wardOptions, ward
                                 <label className="block text-xs font-medium text-gray-600 mb-1">পূর্ণ নাম *</label>
                                 <input className={INPUT} required value={form.name} onChange={set('name')} />
                             </div>
-                            <div className="grid grid-cols-2 gap-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <div>
                                     <label className="block text-xs font-medium text-gray-600 mb-1">Username *</label>
                                     <input className={INPUT} required value={form.username} onChange={set('username')} />
@@ -387,8 +387,8 @@ export default function VolunteerManagementPage() {
     if (!volunteers) return <LoadingState />;
 
     return (
-        <div className="p-6 max-w-3xl mx-auto space-y-6">
-            <div className="flex items-center justify-between">
+        <div className="max-w-3xl mx-auto space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                     <h1 className="text-xl font-bold text-gray-900">Volunteers</h1>
                     <p className="text-sm text-gray-500 mt-0.5">

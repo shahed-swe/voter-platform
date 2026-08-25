@@ -461,7 +461,7 @@ export default function UrbanDashboard() {
             </div>
 
             {/* Left filters panel */}
-            <aside className="absolute left-4 top-4 bottom-4 w-[280px] z-[400] space-y-3 overflow-y-auto pr-1">
+            <aside className="absolute left-4 top-4 bottom-4 w-[min(85vw,280px)] z-[400] space-y-3 overflow-y-auto pr-1">
                 <WardMultiSelect
                     wards={(wardsGeo?.features || []).map((f) => ({
                         ward_id: String(f.properties.ward_id),
@@ -485,7 +485,7 @@ export default function UrbanDashboard() {
             </aside>
 
             {/* Right stats + assign panel */}
-            <aside className="absolute right-4 top-4 bottom-4 w-[280px] z-[400] space-y-3 overflow-y-auto pl-1">
+            <aside className="absolute right-4 top-4 bottom-4 w-[min(85vw,280px)] z-[400] space-y-3 overflow-y-auto pl-1">
                 <PopulationStats stats={stats} scopeLabel={scopeLabel} />
                 <AssignUserCard users={users} target={assignTarget} />
             </aside>

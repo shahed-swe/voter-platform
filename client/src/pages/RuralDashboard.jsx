@@ -172,12 +172,12 @@ export default function RuralDashboard() {
             </div>
 
             {/* Left filter panel */}
-            <aside className="absolute left-4 top-4 bottom-4 w-[280px] z-[400] overflow-y-auto pr-1">
+            <aside className="absolute left-4 top-4 bottom-4 w-[min(85vw,280px)] z-[400] overflow-y-auto pr-1">
                 <DynamicFilterPanel config={cfg} value={filters} onChange={setFilters} />
             </aside>
 
             {/* Right stats + legend + assign */}
-            <aside className="absolute right-4 top-4 bottom-4 w-[280px] z-[400] space-y-3 overflow-y-auto pl-1">
+            <aside className="absolute right-4 top-4 bottom-4 w-[min(85vw,280px)] z-[400] space-y-3 overflow-y-auto pl-1">
                 <PopulationStats stats={{ total_population: stats.total_population, male_count: stats.male_count, female_count: stats.female_count }} scopeLabel={scopeLabel} scopeSubLabel="Total Voters" />
 
                 {/* Voter density legend */}

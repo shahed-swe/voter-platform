@@ -187,14 +187,14 @@ export default function DynamicCanvassing() {
 
             {/* Selected building indicator — canvasses now tag to this building */}
             {buildingCtx && (
-                <div className="absolute top-16 left-1/2 -translate-x-1/2 z-[590] bg-amber-50 border border-amber-300 text-amber-800 rounded-full px-4 py-1.5 text-sm shadow-md flex items-center gap-2">
-                    <i className="fas fa-building" />
-                    <span className="bn font-medium truncate max-w-[220px]">
+                <div className="absolute top-16 left-1/2 -translate-x-1/2 z-[590] max-w-[94vw] bg-amber-50 border border-amber-300 text-amber-800 rounded-full px-3 sm:px-4 py-1.5 text-xs sm:text-sm shadow-md flex items-center gap-1.5 sm:gap-2 whitespace-nowrap">
+                    <i className="fas fa-building shrink-0" />
+                    <span className="bn font-medium truncate max-w-[28vw] sm:max-w-[220px]">
                         {buildingCtx.building_name || `ভবন #${buildingCtx.building_id}`}
                     </span>
                     {buildingCtx.building_id != null && (
                         <button
-                            className={`bn text-xs font-medium px-2 py-0.5 rounded-full border transition-colors ${
+                            className={`bn shrink-0 text-xs font-medium px-2 py-0.5 rounded-full border transition-colors whitespace-nowrap ${
                                 buildingOnly
                                     ? 'bg-amber-600 text-white border-amber-600'
                                     : 'bg-white text-amber-700 border-amber-400 hover:bg-amber-100'
@@ -206,7 +206,7 @@ export default function DynamicCanvassing() {
                         </button>
                     )}
                     <button
-                        className="text-amber-500 hover:text-amber-800"
+                        className="text-amber-500 hover:text-amber-800 shrink-0 px-0.5"
                         onClick={() => { setBuildingCtx(null); setBuildingOnly(false); }}
                         title="Clear selected building"
                     >
@@ -217,7 +217,8 @@ export default function DynamicCanvassing() {
 
             {/* Pinned voter indicator */}
             {pinnedVoter && !activeVoter && (
-                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[600] bg-indigo-600 text-white rounded-full px-4 py-2 text-sm shadow-lg flex items-center gap-2">
+                // bottom-20 on mobile: clears the এলাকা/ভোটার toggle bar at bottom-3
+                <div className="absolute bottom-20 lg:bottom-4 left-1/2 -translate-x-1/2 z-[600] max-w-[94vw] bg-indigo-600 text-white rounded-full px-4 py-2 text-sm shadow-lg flex items-center gap-2 whitespace-nowrap">
                     <i className="fas fa-map-pin" />
                     <span className="font-medium truncate max-w-[180px]">{pinnedVoter.name}</span>
                     <span className="text-indigo-200 text-xs">— click pin to open</span>
