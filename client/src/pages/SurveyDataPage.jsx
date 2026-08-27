@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import * as canvassingApi from '../api/canvassing.js';
 import { useAuth } from '../auth/AuthContext.jsx';
 import { SkeletonList, SkeletonStats, Skeleton, ErrorState, EmptyState, Spinner } from '../components/LoadingState.jsx';
@@ -56,30 +56,35 @@ export default function SurveyDataPage() {
 
     const constituencyId = candidate?.candidate_id;
 
-    const load = useCallback((search) => {
+    // Stats don't depend on the search term — fetch them once per constituency,
+    // and only refetch the records list while searching.
+    const load = useCallback((search, withStats) => {
         setLoading(true);
         Promise.all([
-            canvassingApi.stats(),
             canvassingApi.voterRecords({ q: search || undefined, limit: 300 }),
+            withStats ? canvassingApi.stats() : null,
         ])
-            .then(([s, r]) => {
-                setStats(s.stats || null);
+            .then(([r, s]) => {
                 setRecords(r.records || []);
+                if (s) setStats(s.stats || null);
                 setError(null);
             })
             .catch(setError)
             .finally(() => setLoading(false));
     }, []);
 
-    useEffect(() => { load(''); }, [load, constituencyId]);
+    useEffect(() => { load('', true); }, [load, constituencyId]);
 
-    // debounce search
+    // Debounced search — records only, and not on the initial mount (the effect
+    // above already loaded everything; running here too double-fetched).
+    const firstSearchRun = useRef(true);
     useEffect(() => {
-        const id = setTimeout(() => load(q.trim()), 350);
+        if (firstSearchRun.current) { firstSearchRun.current = false; return; }
+        const id = setTimeout(() => load(q.trim(), false), 350);
         return () => clearTimeout(id);
     }, [q]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    if (error) return <ErrorState error={error} onRetry={() => load('')} />;
+    if (error) return <ErrorState error={error} onRetry={() => load('', true)} />;
     if (records === null) {
         return (
             <div className="max-w-5xl mx-auto space-y-5">
