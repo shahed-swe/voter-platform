@@ -2,11 +2,13 @@ import client from './client';
 
 export const upload = (file, { canvassId, voterId, fileType, durationSeconds }) => {
     const form = new FormData();
-    form.append('file', file);
+    // Metadata fields MUST precede the file part: multer's storage callbacks read
+    // req.body.file_type while streaming, which only holds fields seen so far.
     form.append('canvass_id', canvassId);
     form.append('voter_id', voterId);
     form.append('file_type', fileType);
     if (durationSeconds) form.append('duration_seconds', durationSeconds);
+    form.append('file', file);
     return client
         .post('/media/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } })
         .then((r) => r.data);

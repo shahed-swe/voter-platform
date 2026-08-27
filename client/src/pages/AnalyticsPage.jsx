@@ -21,7 +21,8 @@ ChartJS.register(ArcElement, BarElement, CategoryScale, LinearScale, PointElemen
 // ── constants ───────────────────────────────────────────────────────────────
 
 const INPUT = 'w-full border border-gray-300 rounded-md px-2.5 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand focus:border-brand';
-const INCOME_BRACKETS = ['Low', 'Lower-middle', 'Middle', 'Upper-middle', 'High'];
+// Values must match what CanvassFormModal stores — the income filter is exact-match.
+const INCOME_BRACKETS = ['Low', 'Lower-Middle', 'Middle', 'Upper-Middle', 'High'];
 const AGE_ORDER = ['18-24', '25-34', '35-44', '45-54', '55-64', '65+'];
 const RECORDS_PAGE_SIZE = 50;
 

@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as canvassingApi from '../../api/canvassing.js';
 import * as votersApi from '../../api/voters.js';
 import * as urbanApi from '../../api/urban.js';
+import * as mediaApi from '../../api/media.js';
 import { voterSearchTerms } from '../../utils/avroPhonetic.js';
 import { Spinner } from '../LoadingState.jsx';
 
@@ -13,13 +14,24 @@ const SUPPORT_LEVELS = [
     { value: 'Strong oppose',    label: 'দৃঢ় বিরোধিতা',       color: 'text-red-700' },
 ];
 
+const INCOME_BRACKETS = [
+    { value: 'Low',               label: 'নিম্ন' },
+    { value: 'Lower-Middle',      label: 'নিম্ন-মধ্যম' },
+    { value: 'Middle',            label: 'মধ্যম' },
+    { value: 'Upper-Middle',      label: 'উচ্চ-মধ্যম' },
+    { value: 'High',              label: 'উচ্চ' },
+    { value: 'Prefer not to say', label: 'বলতে পছন্দ করি না' },
+];
+
 function emptyForm(voterId, building) {
     return {
         voter_id: voterId,
         support_level: 'Undecided',
         support_rating: 3,
+        is_undecided: false,
         is_minority: false,
         source: 'Primary',
+        income_bracket: '',
         voter_member_count: '',
         contact_phone: '',
         contact_email: '',
@@ -47,6 +59,48 @@ export default function CanvassFormModal({ voter, building, onClose, onSubmitted
     const [form, setForm]   = useState(() => emptyForm(voter.voter_id, building));
     const [busy, setBusy]   = useState(false);
     const [error, setError] = useState(null);
+
+    // Prefill from the voter's most recent survey so an already-canvassed voter
+    // opens with their saved answers instead of a blank form. dirtyRef guards
+    // against the response overwriting anything the canvasser already changed.
+    const dirtyRef = useRef(false);
+    const [prefilledFrom, setPrefilledFrom] = useState(null);
+    useEffect(() => {
+        let cancelled = false;
+        canvassingApi
+            .history(voter.voter_id)
+            .then((res) => {
+                if (cancelled || dirtyRef.current) return;
+                const last = res.history?.[0];
+                if (!last) return;
+                setForm((f) => ({
+                    ...f,
+                    support_level:      last.support_level || f.support_level,
+                    support_rating:     last.support_rating ?? f.support_rating,
+                    is_undecided:       !!last.is_undecided,
+                    is_minority:        !!last.is_minority,
+                    source:             last.source || f.source,
+                    income_bracket:     last.income_bracket || '',
+                    voter_member_count: last.voter_member_count ?? '',
+                    household_size:     last.household_size ?? '',
+                    contact_phone:      last.contact_phone || '',
+                    contact_email:      last.contact_email || '',
+                    issues_concerns:    last.issues_concerns || '',
+                    follow_up_needed:   !!last.follow_up_needed,
+                    floor_number:       last.floor_number || '',
+                    flat_number:        last.flat_number || '',
+                    address:            last.address || '',
+                    // The clicked building stays authoritative for the geo link;
+                    // prior canvass values only fill the gaps.
+                    building_name: f.building_name || last.building_name || '',
+                    latitude:  f.latitude  !== '' ? f.latitude  : (last.latitude  ?? ''),
+                    longitude: f.longitude !== '' ? f.longitude : (last.longitude ?? ''),
+                }));
+                setPrefilledFrom(last.canvass_date);
+            })
+            .catch(() => {}); // no history / request failure → keep the blank form
+        return () => { cancelled = true; };
+    }, [voter.voter_id]);
 
     // #10 — family members: additional voters at the same location that this one
     // canvass should also cover (same household). The main voter is always included.
@@ -106,11 +160,13 @@ export default function CanvassFormModal({ voter, building, onClose, onSubmitted
     const familyIds = new Set([voter.voter_id, ...family.map((f) => f.voter_id)]);
     const visibleSuggestions = suggested.filter((s) => !familyIds.has(s.voter_id));
 
-    const update = (k) => (e) =>
+    const update = (k) => (e) => {
+        dirtyRef.current = true;
         setForm((f) => ({
             ...f,
             [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value,
         }));
+    };
 
     const [gpsBusy, setGpsBusy] = useState(false);
 
@@ -121,6 +177,7 @@ export default function CanvassFormModal({ voter, building, onClose, onSubmitted
     };
 
     const applyPosition = (pos) => {
+        dirtyRef.current = true;
         setGpsBusy(false);
         setForm((f) => ({
             ...f,
@@ -165,8 +222,98 @@ export default function CanvassFormModal({ voter, building, onClose, onSubmitted
         );
     };
 
+    // ── Media: photo attachment + voice note (uploaded after the canvass insert) ──
+    const [photoFile, setPhotoFile] = useState(null);
+    const [photoUrl, setPhotoUrl]   = useState(null);
+    const [audio, setAudio]         = useState(null); // { blob, url, mime, seconds }
+    const [recording, setRecording] = useState(false);
+    const [recSeconds, setRecSeconds] = useState(0);
+    const recorderRef   = useRef(null);
+    const streamRef     = useRef(null);
+    const chunksRef     = useRef([]);
+    const timerRef      = useRef(null);
+    const recSecondsRef = useRef(0);
+    // Canvass already inserted for all targets — a retry after a failed media
+    // upload must not create duplicate canvass rows.
+    const savedCanvassIdRef = useRef(null);
+
+    const fmtTime = (s) => toBn(`${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`);
+
+    const pickPhoto = (e) => {
+        const file = e.target.files?.[0] || null;
+        setPhotoFile(file);
+        setPhotoUrl((old) => {
+            if (old) URL.revokeObjectURL(old);
+            return file ? URL.createObjectURL(file) : null;
+        });
+    };
+
+    const clearPhoto = () => {
+        setPhotoFile(null);
+        setPhotoUrl((old) => { if (old) URL.revokeObjectURL(old); return null; });
+    };
+
+    const startRecording = async () => {
+        if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+            setError('এই ব্রাউজারে ভয়েস রেকর্ডিং সমর্থিত নয়');
+            return;
+        }
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            streamRef.current = stream;
+            const mime = ['audio/webm', 'audio/mp4', 'audio/ogg']
+                .find((m) => MediaRecorder.isTypeSupported(m));
+            const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+            chunksRef.current = [];
+            rec.ondataavailable = (e) => { if (e.data.size) chunksRef.current.push(e.data); };
+            rec.onstop = () => {
+                const type = (rec.mimeType || mime || 'audio/webm').split(';')[0];
+                const blob = new Blob(chunksRef.current, { type });
+                setAudio((old) => {
+                    if (old?.url) URL.revokeObjectURL(old.url);
+                    return { blob, url: URL.createObjectURL(blob), mime: type, seconds: recSecondsRef.current };
+                });
+                stream.getTracks().forEach((t) => t.stop());
+                streamRef.current = null;
+            };
+            rec.start();
+            recorderRef.current = rec;
+            recSecondsRef.current = 0;
+            setRecSeconds(0);
+            setRecording(true);
+            setError(null);
+            timerRef.current = setInterval(() => {
+                recSecondsRef.current += 1;
+                setRecSeconds(recSecondsRef.current);
+            }, 1000);
+        } catch {
+            setError('মাইক্রোফোন ব্যবহারের অনুমতি পাওয়া যায়নি — ব্রাউজার সেটিংসে অনুমতি দিন।');
+        }
+    };
+
+    const stopRecording = () => {
+        clearInterval(timerRef.current);
+        setRecording(false);
+        if (recorderRef.current?.state !== 'inactive') recorderRef.current?.stop();
+        recorderRef.current = null;
+    };
+
+    const clearAudio = () =>
+        setAudio((old) => { if (old?.url) URL.revokeObjectURL(old.url); return null; });
+
+    useEffect(() => () => {
+        // Unmount: stop any live recording and release object URLs / the mic.
+        clearInterval(timerRef.current);
+        if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
+        streamRef.current?.getTracks().forEach((t) => t.stop());
+    }, []);
+
     async function submit(e) {
         e.preventDefault();
+        if (recording) {
+            setError('ভয়েস রেকর্ডিং চলছে — সংরক্ষণের আগে রেকর্ড বন্ধ করুন।');
+            return;
+        }
         setBusy(true);
         setError(null);
         const shared = {
@@ -181,14 +328,43 @@ export default function CanvassFormModal({ voter, building, onClose, onSubmitted
         // same answers/location but each tagged to its own voter. (#10)
         const targets = [voter, ...family];
         try {
-            for (const t of targets) {
-                await canvassingApi.submit({ ...shared, voter_id: t.voter_id });
+            if (!savedCanvassIdRef.current) {
+                for (const t of targets) {
+                    const res = await canvassingApi.submit({ ...shared, voter_id: t.voter_id });
+                    if (t.voter_id === voter.voter_id && res?.canvass?.canvass_id) {
+                        savedCanvassIdRef.current = res.canvass.canvass_id;
+                    }
+                }
             }
+
+            // Media attaches to the main voter's canvass record. Each upload clears
+            // its local state on success so a retry never uploads it twice.
+            const canvassId = savedCanvassIdRef.current;
+            if (canvassId && photoFile) {
+                await mediaApi.upload(photoFile, {
+                    canvassId, voterId: voter.voter_id, fileType: 'photo',
+                });
+                clearPhoto();
+            }
+            if (canvassId && audio?.blob) {
+                const ext = { 'audio/webm': 'webm', 'audio/mp4': 'm4a', 'audio/ogg': 'ogg' }[audio.mime] || 'webm';
+                const voiceFile = new File([audio.blob], `voice-note.${ext}`, { type: audio.mime });
+                await mediaApi.upload(voiceFile, {
+                    canvassId, voterId: voter.voter_id, fileType: 'audio',
+                    durationSeconds: audio.seconds || null,
+                });
+                clearAudio();
+            }
+
             // Let the page know what was saved (e.g. a typed building name that the
             // server wrote back to the geo layer).
             onSubmitted({ building_name: (shared.building_name || '').trim() || null });
         } catch (err) {
-            setError(err.response?.data?.error || err.message);
+            setError(
+                savedCanvassIdRef.current
+                    ? 'জরিপ সংরক্ষিত হয়েছে, কিন্তু ছবি/ভয়েস আপলোড ব্যর্থ হয়েছে — আবার "সংরক্ষণ করুন" চাপুন।'
+                    : err.response?.data?.error || err.message
+            );
         } finally {
             setBusy(false);
         }
@@ -230,11 +406,39 @@ export default function CanvassFormModal({ voter, building, onClose, onSubmitted
                 </div>
 
                 <div className="p-6 space-y-4">
+                    {prefilledFrom && (
+                        <div className="bg-blue-50 border border-blue-200 text-blue-700 text-xs rounded p-2.5 bn">
+                            <i className="fas fa-clock-rotate-left mr-1" />
+                            এই ভোটার আগে জরিপকৃত — শেষ জরিপের তথ্য (
+                            {new Date(prefilledFrom).toLocaleDateString('bn-BD')}
+                            ) স্বয়ংক্রিয়ভাবে পূরণ করা হয়েছে। প্রয়োজনে পরিবর্তন করে সংরক্ষণ করুন।
+                        </div>
+                    )}
                     {error && (
                         <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded p-3">
                             <i className="fas fa-exclamation-triangle mr-1" /> {error}
                         </div>
                     )}
+
+                    {/* Source: who gave the answers */}
+                    <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-2 bn">উৎস</label>
+                        <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm bn">
+                            {[
+                                { value: 'Primary',   label: 'ভোটার নিজে' },
+                                { value: 'Secondary', label: 'প্রতিবেশী / আত্মীয় / কর্মী' },
+                            ].map((s) => (
+                                <label key={s.value} className="flex items-center gap-2">
+                                    <input
+                                        type="radio" name="source" className="accent-brand"
+                                        checked={form.source === s.value}
+                                        onChange={() => setForm((f) => ({ ...f, source: s.value }))}
+                                    />
+                                    {s.label}
+                                </label>
+                            ))}
+                        </div>
+                    </div>
 
                     {/* Support level: button group */}
                     <div>
@@ -246,7 +450,7 @@ export default function CanvassFormModal({ voter, building, onClose, onSubmitted
                                 <button
                                     key={l.value}
                                     type="button"
-                                    onClick={() => setForm((f) => ({ ...f, support_level: l.value }))}
+                                    onClick={() => { dirtyRef.current = true; setForm((f) => ({ ...f, support_level: l.value })); }}
                                     className={`rounded-md border px-2 py-2 text-xs bn transition-colors ${
                                         form.support_level === l.value
                                             ? 'bg-brand text-white border-brand'
@@ -269,7 +473,7 @@ export default function CanvassFormModal({ voter, building, onClose, onSubmitted
                                 <button
                                     key={n}
                                     type="button"
-                                    onClick={() => setForm((f) => ({ ...f, support_rating: n }))}
+                                    onClick={() => { dirtyRef.current = true; setForm((f) => ({ ...f, support_rating: n })); }}
                                     className={n <= form.support_rating ? 'text-yellow-500' : 'text-gray-300'}
                                 >
                                     <i className="fas fa-star" />
@@ -281,13 +485,32 @@ export default function CanvassFormModal({ voter, building, onClose, onSubmitted
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         <div>
                             <label className="block text-xs font-medium text-gray-600 mb-1 bn">যোগাযোগ ফোন</label>
-                            <input className="input-field" value={form.contact_phone} onChange={update('contact_phone')} />
+                            <input
+                                type="tel" className="input-field" placeholder="01712345678"
+                                value={form.contact_phone} onChange={update('contact_phone')}
+                            />
                         </div>
                         <div>
-                            <label className="block text-xs font-medium text-gray-600 mb-1 bn">পরিবারের আকার</label>
+                            <label className="block text-xs font-medium text-gray-600 mb-1 bn">পরিবারের সদস্য সংখ্যা</label>
                             <input
-                                type="number" className="input-field"
+                                type="number" min="1" className="input-field bn" placeholder="যেমন, ৫"
                                 value={form.household_size} onChange={update('household_size')}
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-medium text-gray-600 mb-1 bn">আয়ের স্তর</label>
+                            <select className="input-field bn" value={form.income_bracket} onChange={update('income_bracket')}>
+                                <option value="">নির্বাচন করুন...</option>
+                                {INCOME_BRACKETS.map((b) => (
+                                    <option key={b.value} value={b.value}>{b.label}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-xs font-medium text-gray-600 mb-1 bn">এই ঠিকানায় ভোটার সদস্য সংখ্যা</label>
+                            <input
+                                type="number" min="0" className="input-field bn" placeholder="যেমন, ৩"
+                                value={form.voter_member_count} onChange={update('voter_member_count')}
                             />
                         </div>
                         <div className="md:col-span-2">
@@ -406,16 +629,94 @@ export default function CanvassFormModal({ voter, building, onClose, onSubmitted
                         </button>
                     </div>
 
-                    <div className="flex gap-6 text-sm pt-1 bn">
+                    <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm pt-1 bn">
                         <label className="flex items-center gap-2">
                             <input type="checkbox" className="accent-brand" checked={form.follow_up_needed} onChange={update('follow_up_needed')} />
                             ফলো-আপ প্রয়োজন
                         </label>
                         <label className="flex items-center gap-2">
+                            <input type="checkbox" className="accent-brand" checked={form.is_undecided} onChange={update('is_undecided')} />
+                            আওয়ামী লীগ
+                        </label>
+                        <label className="flex items-center gap-2">
                             <input type="checkbox" className="accent-brand" checked={form.is_minority} onChange={update('is_minority')} />
-                            সংখ্যালঘু পরিবার
+                            সংখ্যালঘু (Minority)
                         </label>
                     </div>
+
+                    {/* Media: photo attachment + voice note */}
+                    <fieldset className="border border-gray-200 rounded-md p-3">
+                        <legend className="text-xs font-medium text-gray-600 px-1 bn">
+                            মিডিয়া (ছবি ও ভয়েস)
+                        </legend>
+
+                        <div className="mt-1">
+                            <label className="block text-xs font-medium text-gray-600 mb-1 bn">ফটো আপলোড করুন</label>
+                            {photoFile ? (
+                                <div className="flex items-center gap-3">
+                                    {photoUrl && (
+                                        <img
+                                            src={photoUrl} alt=""
+                                            className="w-14 h-14 rounded-md object-cover border border-gray-200"
+                                        />
+                                    )}
+                                    <span className="text-xs text-gray-600 truncate flex-1">{photoFile.name}</span>
+                                    <button
+                                        type="button" onClick={clearPhoto}
+                                        className="text-red-500 hover:text-red-600 text-sm flex-shrink-0"
+                                        title="ছবি বাদ দিন"
+                                    >
+                                        <i className="fas fa-trash-can" />
+                                    </button>
+                                </div>
+                            ) : (
+                                <input
+                                    type="file" accept="image/*" capture="environment"
+                                    className="input-field" onChange={pickPhoto}
+                                />
+                            )}
+                            <p className="text-[11px] text-gray-400 mt-1 bn">JPG, PNG এবং অন্যান্য ছবির ফরম্যাট সমর্থিত</p>
+                        </div>
+
+                        <div className="mt-3">
+                            <label className="block text-xs font-medium text-gray-600 mb-1 bn">ভয়েস নোট রেকর্ড করুন</label>
+                            <div className="flex flex-wrap items-center gap-3">
+                                {!recording ? (
+                                    <button type="button" className="btn-primary !py-1.5 !px-3 text-xs" onClick={startRecording}>
+                                        <i className="fas fa-microphone" />
+                                        <span className="bn">রেকর্ড শুরু করুন</span>
+                                    </button>
+                                ) : (
+                                    <button type="button" className="btn-danger !py-1.5 !px-3 text-xs" onClick={stopRecording}>
+                                        <i className="fas fa-stop" />
+                                        <span className="bn">রেকর্ড বন্ধ করুন</span>
+                                    </button>
+                                )}
+                                {recording && (
+                                    <span className="text-xs text-red-600 font-medium">
+                                        <i className="fas fa-circle animate-pulse mr-1 text-[8px] align-middle" />
+                                        {fmtTime(recSeconds)}
+                                    </span>
+                                )}
+                                {audio && !recording && (
+                                    <>
+                                        <audio controls src={audio.url} className="h-8 max-w-[220px]" />
+                                        <span className="text-xs text-gray-500">{fmtTime(audio.seconds)}</span>
+                                        <button
+                                            type="button" onClick={clearAudio}
+                                            className="text-red-500 hover:text-red-600 text-sm"
+                                            title="রেকর্ডিং বাদ দিন"
+                                        >
+                                            <i className="fas fa-trash-can" />
+                                        </button>
+                                    </>
+                                )}
+                            </div>
+                            <p className="text-[11px] text-gray-400 mt-1 bn">
+                                ভোটারের কথা বা অন্যান্য গুরুত্বপূর্ণ মন্তব্য রেকর্ড করুন
+                            </p>
+                        </div>
+                    </fieldset>
                 </div>
 
                 <div className="border-t border-gray-200 px-6 py-3 sticky bottom-0 bg-white flex justify-end gap-2 rounded-b-xl">
