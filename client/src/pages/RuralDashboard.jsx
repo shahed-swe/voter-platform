@@ -9,8 +9,8 @@ import AssignUserCard from '../components/dashboard/AssignUserCard.jsx';
 import { LoadingState, ErrorState } from '../components/LoadingState.jsx';
 import { useAuth } from '../auth/AuthContext.jsx';
 
-import * as geoApi from '../api/geo.js';
-import * as adminApi from '../api/admin.js';
+import { useQueryClient } from '@tanstack/react-query';
+import { fetchVillagesGeo, fetchUsers } from '../hooks/queries/index.js';
 
 // 5-bucket green palette for voter density (matches the legacy panchagar legend).
 const PALETTE = ['#E8F5E9', '#A5D6A7', '#66BB6A', '#2E7D32', '#1B5E20'];
@@ -39,6 +39,8 @@ function FitTo({ features }) {
 
 export default function RuralDashboard() {
     const { user, candidate } = useAuth();
+    const queryClient = useQueryClient();
+    const cid = candidate?.candidate_id;
     const cfg = candidate?.filter_config || [];
     const mapCfg = candidate?.map_config || {};
     const buckets = mapCfg.legend?.buckets || [0, 2000, 5000, 10000, 15000];
@@ -52,8 +54,8 @@ export default function RuralDashboard() {
     useEffect(() => {
         let cancelled = false;
         Promise.all([
-            geoApi.villages(),
-            adminApi.listUsers({ is_active: true, limit: 500 }).catch(() => ({ users: [] })),
+            fetchVillagesGeo(queryClient, cid),
+            fetchUsers(queryClient, cid, { is_active: true, limit: 500 }).catch(() => ({ users: [] })),
         ])
             .then(([villages, usersResp]) => {
                 if (cancelled) return;

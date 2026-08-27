@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import L from 'leaflet';
 import { MapContainer, TileLayer, GeoJSON, useMap, LayersControl, Marker, Popup, Tooltip } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -8,7 +9,8 @@ import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 
 import * as layersApi from '../api/layers.js';
-import * as votersApi from '../api/voters.js';
+import { keys, TIER } from '../api/queryKeys.js';
+import { useGeoOptions } from '../hooks/queries/index.js';
 import CanvassedVotersModal from './dashboard/CanvassedVotersModal.jsx';
 import { LoadingState, ErrorState } from './LoadingState.jsx';
 import { wardLabelToScope } from '../utils/geoScope.js';
@@ -185,24 +187,20 @@ export default function DynamicMap({
     const [activeBuilding, setActiveBuilding] = useState(null);
     const [overlayOn, setOverlayOn]     = useState({});  // overlayId → bool
     const [overlayData, setOverlayData] = useState({});  // overlayId → FeatureCollection
-    const [areaFids, setAreaFids]       = useState({});  // voter_area_name → { village_feature_id, ward_feature_id }
 
-    // Load the curated voter-area → geo (village + ward) mapping once, so selecting
-    // a voter area can drill the map straight to that area's buildings.
-    useEffect(() => {
-        let cancelled = false;
-        votersApi.geoOptions([])
-            .then((r) => {
-                if (cancelled) return;
-                const m = {};
-                for (const a of r.voter_areas || []) {
-                    if (a.village_feature_id) m[a.value] = { village: a.village_feature_id, ward: a.ward_feature_id };
-                }
-                setAreaFids(m);
-            })
-            .catch(() => {});
-        return () => { cancelled = true; };
-    }, [candidateId]);
+    const queryClient = useQueryClient();
+
+    // Curated voter-area → geo (village + ward) mapping, so selecting a voter
+    // area can drill the map straight to that area's buildings. Shared cache
+    // entry with GeoNavigator (which requests the same options on this screen).
+    const geoOptionsQuery = useGeoOptions([]);
+    const areaFids = useMemo(() => {
+        const m = {};
+        for (const a of geoOptionsQuery.data?.voter_areas || []) {
+            if (a.village_feature_id) m[a.value] = { village: a.village_feature_id, ward: a.ward_feature_id };
+        }
+        return m;
+    }, [geoOptionsQuery.data]);
     const [myLocation, setMyLocation]   = useState(null); // [lat, lng] — canvasser's live position (#8)
 
     // Track the canvasser's location. Needs an HTTPS secure context (see docs/HTTPS.md);
@@ -241,7 +239,12 @@ export default function DynamicMap({
         const on = !overlayOn[spec.id];
         setOverlayOn((m) => ({ ...m, [spec.id]: on }));
         if (on && !overlayData[spec.id]) {
-            layersApi.fetchSource(spec.source)
+            queryClient
+                .fetchQuery({
+                    queryKey: keys.layerSource(candidateId, spec.source, null),
+                    queryFn: () => layersApi.fetchSource(spec.source),
+                    ...TIER.STATIC,
+                })
                 .then((d) => setOverlayData((m) => ({ ...m, [spec.id]: d })))
                 .catch(() => {});
         }
@@ -257,22 +260,32 @@ export default function DynamicMap({
     // The currently deepest visible layer
     const deepest = layersSpec[drillStack.length];
 
-    // Fetch root layer whenever candidate changes (no caching)
+    // Fetch root layer whenever candidate changes — served from the query cache
+    // when already loaded (drilling back up / revisiting the page is instant).
     useEffect(() => {
         if (!layersSpec.length) return;
         const root = layersSpec[0];
         let cancelled = false;
         setLoading(true);
         setDataByLayer({});          // clear all stale data first
-        layersApi
-            .fetchSource(root.source)
+        queryClient
+            .fetchQuery({
+                queryKey: keys.layerSource(candidateId, root.source, null),
+                queryFn: () => layersApi.fetchSource(root.source),
+                ...TIER.STATIC,
+            })
             .then((d) => !cancelled && setDataByLayer({ [root.id]: d }))
             .catch((err) => !cancelled && setError(err))
             .finally(() => !cancelled && setLoading(false));
         return () => { cancelled = true; };
     }, [candidateId, JSON.stringify(layersSpec.map((l) => l.id))]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Fetch child layer fresh every time the drill selection changes (no caching)
+    // Fetch the child layer when the drill selection changes — cache-first, so
+    // re-drilling into an already-visited branch does not refetch its GeoJSON.
+    // refreshKey: a canvass submit updates building names + canvassed colors
+    // server-side — drop the cached entries for this source so the drilled
+    // layer refetches and the map reflects them without re-drilling.
+    const lastRefreshKey = useRef(refreshKey);
     useEffect(() => {
         if (!deepest) return;
         const parentStack = drillStack[drillStack.length - 1];
@@ -284,10 +297,19 @@ export default function DynamicMap({
             return;
         }
 
+        if (lastRefreshKey.current !== refreshKey) {
+            lastRefreshKey.current = refreshKey;
+            queryClient.removeQueries({ queryKey: ['c', candidateId, 'layer', deepest.source] });
+        }
+
         let cancelled = false;
         setLoading(true);
-        layersApi
-            .fetchByParent(deepest.source, parentFk, parentStack.id)
+        queryClient
+            .fetchQuery({
+                queryKey: keys.layerSource(candidateId, deepest.source, `${parentFk}=${parentStack.id}`),
+                queryFn: () => layersApi.fetchByParent(deepest.source, parentFk, parentStack.id),
+                ...TIER.STATIC,
+            })
             .then((d) => {
                 if (cancelled) return;
                 // Store result keyed so we can keep parent context layers visible
@@ -297,8 +319,6 @@ export default function DynamicMap({
             .catch((err) => !cancelled && setError(err))
             .finally(() => !cancelled && setLoading(false));
         return () => { cancelled = true; };
-    // refreshKey: a canvass submit updates building names + canvassed colors server-side —
-    // refetch the drilled layer so the map reflects them without re-drilling.
     }, [JSON.stringify(drillStack.map((s) => s.id)), candidateId, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // A single selected voter area that maps to a geo village — the area drill

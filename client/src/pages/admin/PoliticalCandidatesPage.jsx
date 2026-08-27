@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as peopleApi from '../../api/people.js';
-import * as candidatesApi from '../../api/candidates.js';
 import MultiSelect from '../../components/MultiSelect.jsx';
 import { SkeletonList, Skeleton, ErrorState, EmptyState, Spinner } from '../../components/LoadingState.jsx';
 import { useAuth } from '../../auth/AuthContext.jsx';
+import { useCandidates } from '../../hooks/queries/index.js';
+import { keys, TIER } from '../../api/queryKeys.js';
 
 const constituencyOpts = (list) => (list || []).map((c) => ({ value: c.candidate_id, label: `${c.name} — ${c.constituency}` }));
 
@@ -145,30 +147,34 @@ function AssignConstituencyModal({ candidate, constituencies, onClose, onSaved }
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function PoliticalCandidatesPage() {
-    const { user } = useAuth();
-    const [candidates, setCandidates]       = useState(null);
-    const [constituencies, setConstituencies] = useState([]);
-    const [error, setError]                 = useState(null);
+    const { user, candidate } = useAuth();
     const [showCreate, setShowCreate]       = useState(false);
     const [assigning, setAssigning]         = useState(null);
 
-    if (!user?.is_super_admin) {
+    const isSuper = !!user?.is_super_admin;
+    const cid = candidate?.candidate_id ?? null;
+    const queryClient = useQueryClient();
+    // Both lists run in parallel; cached under the current constituency.
+    const pcQuery = useQuery({
+        queryKey: keys.peopleCandidates(cid),
+        queryFn: () => peopleApi.listCandidates(),
+        enabled: isSuper,
+        ...TIER.REFERENCE,
+    });
+    const constQuery = useCandidates({ enabled: isSuper });
+
+    if (!isSuper) {
         return <div className="p-8 text-red-600">Super-admin only.</div>;
     }
 
-    function reload() {
-        Promise.all([
-            peopleApi.listCandidates(),
-            candidatesApi.list(),
-        ])
-            .then(([cRes, constRes]) => {
-                setCandidates(cRes.candidates || []);
-                setConstituencies(constRes.candidates || constRes || []);
-            })
-            .catch(setError);
-    }
+    const candidates     = pcQuery.data ? (pcQuery.data.candidates || []) : null;
+    const constituencies = constQuery.data || [];
+    const error          = pcQuery.error || constQuery.error;
 
-    useEffect(() => { reload(); }, []);
+    function reload() {
+        queryClient.invalidateQueries({ queryKey: keys.peopleCandidates(cid) });
+        queryClient.invalidateQueries({ queryKey: keys.candidates() });
+    }
 
     async function handleDelete(c) {
         if (!confirm(`"${c.name}" (@${c.username}) candidate-কে ডিলিট করবেন? এটি ফেরানো যাবে না।`)) return;

@@ -9,7 +9,8 @@ import CanvassFormModal from '../components/canvassing/CanvassFormModal.jsx';
 import { LoadingState, ErrorState } from '../components/LoadingState.jsx';
 import { useAuth } from '../auth/AuthContext.jsx';
 
-import * as geoApi from '../api/geo.js';
+import { useQueryClient } from '@tanstack/react-query';
+import { fetchVillagesGeo } from '../hooks/queries/index.js';
 
 const PALETTE = ['#E8F5E9', '#A5D6A7', '#66BB6A', '#2E7D32', '#1B5E20'];
 
@@ -52,6 +53,8 @@ function BaseLayerToggle({ value, onChange }) {
 
 export default function RuralCanvassingPage() {
     const { candidate } = useAuth();
+    const queryClient = useQueryClient();
+    const cid = candidate?.candidate_id;
     const cfg = candidate?.filter_config || [];
     const mapCfg = candidate?.map_config || {};
     const buckets = mapCfg.legend?.buckets || [0, 2000, 5000, 10000, 15000];
@@ -66,7 +69,7 @@ export default function RuralCanvassingPage() {
 
     useEffect(() => {
         let cancelled = false;
-        geoApi.villages()
+        fetchVillagesGeo(queryClient, cid)
             .then((d) => !cancelled && setVillagesGeo(d))
             .catch((err) => !cancelled && setError(err))
             .finally(() => !cancelled && setLoading(false));

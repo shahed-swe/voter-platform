@@ -14,7 +14,10 @@ import {
 } from '../components/LoadingState.jsx';
 import { useAuth } from '../auth/AuthContext.jsx';
 import * as analyticsApi from '../api/analytics.js';
-import * as votersApi from '../api/voters.js';
+import { useQuery } from '@tanstack/react-query';
+import { keys, TIER } from '../api/queryKeys.js';
+import { useGeoOptions } from '../hooks/queries/index.js';
+import useDebounce from '../hooks/useDebounce.js';
 
 ChartJS.register(ArcElement, BarElement, CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Title, Filler);
 
@@ -120,21 +123,10 @@ function Pagination({ page, total, pageSize, onPage }) {
 
 export default function AnalyticsPage() {
     const { candidate } = useAuth();
+    const cid = candidate?.candidate_id;
     const [filters, setFilters] = useState(defaultFilters);
     const [tab, setTab] = useState('overview');
 
-    // Filter options
-    const [canvassers, setCanvassers] = useState([]);
-    const [areaOpts, setAreaOpts] = useState([]);
-
-    // Overview data (one batched load)
-    const [data, setData] = useState(null);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
-
-    // Tab 2 (issues) + Tab 4 (records) — separately fetched/paginated
-    const [issues, setIssues] = useState({ records: [], total: 0, loading: true });
-    const [records, setRecords] = useState({ rows: [], total: 0, loading: true });
     const [recordsPage, setRecordsPage] = useState(1);
     const [selected, setSelected] = useState(() => new Set());
 
@@ -145,70 +137,79 @@ export default function AnalyticsPage() {
     const set = (k) => (v) => setFilters((f) => ({ ...f, [k]: v }));
     const reset = () => setFilters(defaultFilters());
 
-    // ── filter option lists ─────────────────────────────────────────────────
-    useEffect(() => {
-        analyticsApi.canvassers().then((r) => setCanvassers(r.canvassers || [])).catch(() => {});
-        votersApi.geoOptions([]).then((r) => {
-            const wards = (r.wards || []).map((w) => w.value);
-            if (wards.length) {
-                return votersApi.geoOptions(wards).then((rr) =>
-                    setAreaOpts((rr.voter_areas || []).map((a) => ({ value: a.value, label: a.value })))
-                );
-            }
-        }).catch(() => {});
-    }, [candidate?.candidate_id]);
+    // Debounced filters drive every query key: rapid filter edits collapse into
+    // one request per endpoint, and stale responses can't overwrite newer data
+    // (each filter state is its own cache entry).
+    const debouncedFilters = useDebounce(filters, 300);
+    const params = useMemo(() => toParams(debouncedFilters), [debouncedFilters]);
 
-    // ── batched overview load (debounced 300ms; stale responses discarded) ──
-    useEffect(() => {
-        let cancelled = false;
-        const id = setTimeout(() => {
-            setLoading(true);
-            const p = toParams(filters);
-            Promise.all([
-                analyticsApi.overview(p),
-                analyticsApi.supportDistribution(p),
-                analyticsApi.demographics(p),
-                analyticsApi.incomeDistribution(p),
-                analyticsApi.dailyTrends({ ...p, days: 30 }),
-                analyticsApi.occupations({ ...p, limit: 10 }),
-                analyticsApi.canvasserPerformance({ ...p, limit: 100 }),
-                analyticsApi.villagePerformance({ ...p, limit: 10 }),
-            ])
-                .then((res) => { if (!cancelled) { setData(res); setError(null); } })
-                .catch((e) => { if (!cancelled) setError(e); })
-                .finally(() => { if (!cancelled) setLoading(false); });
-        }, 300);
-        return () => { cancelled = true; clearTimeout(id); };
-    }, [JSON.stringify(filters), candidate?.candidate_id]);
+    // ── filter option lists (cache-shared with GeoNavigator / DynamicMap) ───
+    const canvassersQuery = useQuery({
+        queryKey: keys.canvassers(cid),
+        queryFn: () => analyticsApi.canvassers(),
+        enabled: !!cid,
+        ...TIER.REFERENCE,
+    });
+    const canvassers = canvassersQuery.data?.canvassers || [];
+
+    const wardsOptQuery = useGeoOptions([]);
+    const allWards = useMemo(() => (wardsOptQuery.data?.wards || []).map((w) => w.value), [wardsOptQuery.data]);
+    const areasOptQuery = useGeoOptions(allWards, { enabled: allWards.length > 0 });
+    const areaOpts = useMemo(
+        () => (areasOptQuery.data?.voter_areas || []).map((a) => ({ value: a.value, label: a.value })),
+        [areasOptQuery.data]
+    );
+
+    // ── batched overview load (8 endpoints in parallel, one cache entry) ────
+    const batchQuery = useQuery({
+        queryKey: keys.analytics(cid, 'batch', params),
+        queryFn: () => Promise.all([
+            analyticsApi.overview(params),
+            analyticsApi.supportDistribution(params),
+            analyticsApi.demographics(params),
+            analyticsApi.incomeDistribution(params),
+            analyticsApi.dailyTrends({ ...params, days: 30 }),
+            analyticsApi.occupations({ ...params, limit: 10 }),
+            analyticsApi.canvasserPerformance({ ...params, limit: 100 }),
+            analyticsApi.villagePerformance({ ...params, limit: 10 }),
+        ]),
+        enabled: !!cid,
+        ...TIER.LIVE,
+    });
+    const data = batchQuery.data ?? null;
+    const loading = batchQuery.isLoading;
+    const error = batchQuery.error;
 
     // ── issues list ─────────────────────────────────────────────────────────
-    useEffect(() => {
-        let cancelled = false;
-        const id = setTimeout(() => {
-            setIssues((s) => ({ ...s, loading: true }));
-            analyticsApi.issuesRecords({ ...toParams(filters), limit: 500 })
-                .then((r) => { if (!cancelled) setIssues({ records: r.records || [], total: r.total || 0, loading: false }); })
-                .catch(() => { if (!cancelled) setIssues({ records: [], total: 0, loading: false }); });
-        }, 300);
-        return () => { cancelled = true; clearTimeout(id); };
-    }, [JSON.stringify(filters), candidate?.candidate_id]);
+    const issuesQuery = useQuery({
+        queryKey: keys.analytics(cid, 'issues', params),
+        queryFn: () => analyticsApi.issuesRecords({ ...params, limit: 500 }),
+        enabled: !!cid,
+        ...TIER.LIVE,
+    });
+    const issues = {
+        records: issuesQuery.data?.records || [],
+        total: issuesQuery.data?.total || 0,
+        loading: issuesQuery.isLoading,
+    };
 
     // ── canvassing records (server-side pagination) ─────────────────────────
     useEffect(() => { setRecordsPage(1); setSelected(new Set()); }, [JSON.stringify(filters)]);
-    useEffect(() => {
-        let cancelled = false;
-        const id = setTimeout(() => {
-            setRecords((s) => ({ ...s, loading: true }));
-            analyticsApi.canvassingRecords({
-                ...toParams(filters),
-                limit: RECORDS_PAGE_SIZE,
-                offset: (recordsPage - 1) * RECORDS_PAGE_SIZE,
-            })
-                .then((r) => { if (!cancelled) setRecords({ rows: r.records || [], total: r.total || 0, loading: false }); })
-                .catch(() => { if (!cancelled) setRecords({ rows: [], total: 0, loading: false }); });
-        }, 300);
-        return () => { cancelled = true; clearTimeout(id); };
-    }, [JSON.stringify(filters), recordsPage, candidate?.candidate_id]);
+    const recordsQuery = useQuery({
+        queryKey: keys.analytics(cid, 'records', { ...params, page: recordsPage }),
+        queryFn: () => analyticsApi.canvassingRecords({
+            ...params,
+            limit: RECORDS_PAGE_SIZE,
+            offset: (recordsPage - 1) * RECORDS_PAGE_SIZE,
+        }),
+        enabled: !!cid,
+        ...TIER.LIVE,
+    });
+    const records = {
+        rows: recordsQuery.data?.records || [],
+        total: recordsQuery.data?.total || 0,
+        loading: recordsQuery.isLoading,
+    };
 
     // ── derived chart data ──────────────────────────────────────────────────
     const overview = data?.[0]?.overview || {};
@@ -476,7 +477,7 @@ export default function AnalyticsPage() {
                 })}
             </div>
 
-            {error ? <ErrorState error={error} onRetry={reset} /> : (
+            {error ? <ErrorState error={error} onRetry={() => batchQuery.refetch()} /> : (
                 <>
                     {/* ════ TAB 1 — Overview ════ */}
                     {tab === 'overview' && (

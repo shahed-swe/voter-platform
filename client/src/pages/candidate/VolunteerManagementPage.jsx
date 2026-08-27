@@ -1,6 +1,8 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import * as peopleApi from '../../api/people.js';
 import * as layersApi from '../../api/layers.js';
+import { keys, TIER } from '../../api/queryKeys.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { wardLabelToScope } from '../../utils/geoScope.js';
 import { SkeletonList, Skeleton, ErrorState, EmptyState, Spinner } from '../../components/LoadingState.jsx';
@@ -325,6 +327,7 @@ function EditWardsModal({ volunteer, constituencyId, onClose, onSaved, wardOptio
 
 export default function VolunteerManagementPage() {
     const { user, candidate } = useAuth();
+    const queryClient = useQueryClient();
     const [volunteers, setVolunteers] = useState(null);
     const [error, setError]           = useState(null);
     const [showAdd, setShowAdd]       = useState(false);
@@ -348,13 +351,19 @@ export default function VolunteerManagementPage() {
 
     useEffect(() => { reload(); }, [reload]);
 
-    // Load the constituency's wards for the assignment dropdown.
+    // Load the constituency's wards for the assignment dropdown. Same cache
+    // entry as the map's root ward layer — visiting the dashboard first makes
+    // this a cache hit instead of a second full-GeoJSON download.
     useEffect(() => {
         const wardLayer = wardLayerOf(candidate);
         if (!wardLayer) { setWardOptions([]); return; }
         let cancelled = false;
         setWardsLoading(true);
-        layersApi.fetchSource(wardLayer.source)
+        queryClient.fetchQuery({
+            queryKey: keys.layerSource(constituencyId, wardLayer.source, null),
+            queryFn: () => layersApi.fetchSource(wardLayer.source),
+            ...TIER.STATIC,
+        })
             .then((fc) => {
                 if (cancelled) return;
                 const seen = new Set();

@@ -1,8 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import VoterCard from './VoterCard.jsx';
 import * as votersApi from '../../api/voters.js';
 import { voterSearchTerms } from '../../utils/avroPhonetic.js';
 import { SkeletonList, EmptyState, ErrorState } from '../LoadingState.jsx';
+import useDebounce from '../../hooks/useDebounce.js';
+import { useAuth } from '../../auth/AuthContext.jsx';
+import { keys, TIER } from '../../api/queryKeys.js';
 
 const BN_DIGITS = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
 const toBn = (s) => String(s ?? '').replace(/[0-9]/g, (d) => BN_DIGITS[+d]);
@@ -14,46 +18,28 @@ const TABS = [
     { key: 'Follow-up needed',  label: 'ফলো-আপ প্রয়োজন'  },
 ];
 
-function useDebounce(value, ms = 400) {
-    const [v, setV] = useState(value);
-    useEffect(() => {
-        const id = setTimeout(() => setV(value), ms);
-        return () => clearTimeout(id);
-    }, [value, ms]);
-    return v;
-}
-
 const EMPTY_STATS = { total: 0, visited: 0, not_visited: 0, follow_up: 0 };
 const PAGE_SIZE = 10;
 
 /**
- * Voter list panel driven by /api/voters/filtered.
+ * Voter list panel driven by /api/voters/filtered (useInfiniteQuery).
  * Loads PAGE_SIZE voters at a time; additional pages load automatically
  * as the user scrolls to the bottom (IntersectionObserver sentinel).
+ * A canvass submit invalidates the ['c', cid, 'voters'] cache subtree, which
+ * refetches this list — no manual refresh keys.
  *
  *   filters     — user-facing filter values from DynamicFilterPanel
  *   scope       — geo scope (e.g. {ward: '৫২'})
  *   scopeLabel  — display label for the header
  *   onPickVoter — callback when a voter card is clicked
- *   refreshKey  — increment to force reload without changing scope/filters
  *   buildingFilter — geo building feature_id: only voters canvassed at that building
  */
-export default function FilteredVoterListPanel({ filters, scope, scopeLabel, onPickVoter, refreshKey = 0, buildingFilter = null }) {
-    const [query, setQuery]             = useState('');
-    const [status, setStatus]           = useState('');
-    const [voters, setVoters]           = useState([]);
-    const [stats, setStats]             = useState(EMPTY_STATS);
-    const [loading, setLoading]         = useState(false);
-    const [loadingMore, setLoadingMore] = useState(false);
-    const [error, setError]             = useState(null);
-
-    console.log(voters,'this is the voters data')
-
-    // fetchSpec drives all API calls.
-    // replace:true  → clear list and load from offset 0
-    // replace:false → append next page to existing list
-    const [fetchSpec, setFetchSpec] = useState(null);
-    const sentinelRef               = useRef(null);
+export default function FilteredVoterListPanel({ filters, scope, scopeLabel, onPickVoter, buildingFilter = null }) {
+    const { candidate } = useAuth();
+    const cid = candidate?.candidate_id;
+    const [query, setQuery]   = useState('');
+    const [status, setStatus] = useState('');
+    const sentinelRef         = useRef(null);
 
     const dQuery = useDebounce(query, 400);
 
@@ -61,94 +47,59 @@ export default function FilteredVoterListPanel({ filters, scope, scopeLabel, onP
         Object.values(filters || {}).some((v) => v != null && v !== '' && !(Array.isArray(v) && v.length === 0)) ||
         Object.values(scope  || {}).some((v) => v != null && v !== '');
 
-    // Reset to page 0 whenever scope / filters / status / search / refreshKey change
-    useEffect(() => {
-        if (!hasScope) {
-            setVoters([]);
-            setStats(EMPTY_STATS);
-            setFetchSpec(null);
-            return;
-        }
+    // Everything that identifies one list — part of the query key, so changing
+    // any of it starts a fresh list at offset 0 (the old "replace" reset).
+    const listParams = useMemo(() => {
         const terms = voterSearchTerms(dQuery);
-        setFetchSpec({
+        return {
             filters: filters || {},
             scope:   scope   || {},
             status:  status  || undefined,
             search:  terms.search,
             search_bn: terms.search_bn,
             building_feature_id: buildingFilter || undefined,
-            offset:  0,
-            replace: true,
-        });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [JSON.stringify(filters), JSON.stringify(scope), status, dQuery, hasScope, refreshKey, buildingFilter]);
+        };
+    }, [JSON.stringify(filters), JSON.stringify(scope), status, dQuery, buildingFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Execute whichever fetch is queued
-    useEffect(() => {
-        if (!fetchSpec) return;
-        let cancelled = false;
+    const listQuery = useInfiniteQuery({
+        queryKey: keys.voterList(cid, listParams),
+        queryFn: ({ pageParam }) => votersApi.filtered({ ...listParams, limit: PAGE_SIZE, offset: pageParam }),
+        initialPageParam: 0,
+        getNextPageParam: (lastPage, allPages) => {
+            const loaded = allPages.reduce((n, p) => n + (p.voters?.length || 0), 0);
+            const total = Number(lastPage.stats?.total || 0);
+            return loaded < total && (lastPage.voters?.length || 0) > 0 ? loaded : undefined;
+        },
+        enabled: !!cid && hasScope,
+        ...TIER.LIVE,
+    });
 
-        if (fetchSpec.replace) { setLoading(true); setError(null); }
-        else                   { setLoadingMore(true); }
+    const voters = useMemo(
+        () => (hasScope ? (listQuery.data?.pages || []).flatMap((p) => p.voters || []) : []),
+        [listQuery.data, hasScope]
+    );
+    const stats = (hasScope && listQuery.data?.pages?.length)
+        ? (listQuery.data.pages[listQuery.data.pages.length - 1].stats || EMPTY_STATS)
+        : EMPTY_STATS;
+    const loading     = hasScope && listQuery.isLoading;
+    const loadingMore = listQuery.isFetchingNextPage;
+    const error       = listQuery.error;
+    const hasMore     = !!listQuery.hasNextPage;
 
-        votersApi.filtered({
-            filters:   fetchSpec.filters,
-            scope:     fetchSpec.scope,
-            status:    fetchSpec.status,
-            search:    fetchSpec.search,
-            search_bn: fetchSpec.search_bn,
-            building_feature_id: fetchSpec.building_feature_id,
-            limit:     PAGE_SIZE,
-            offset:    fetchSpec.offset,
-        })
-            .then((res) => {
-                if (cancelled) return;
-                const next = res.voters || [];
-                if (fetchSpec.replace) setVoters(next);
-                else                   setVoters((prev) => [...prev, ...next]);
-                setStats(res.stats || EMPTY_STATS);
-            })
-            .catch((err) => { if (!cancelled) setError(err); })
-            .finally(() => {
-                if (!cancelled) { setLoading(false); setLoadingMore(false); }
-            });
-
-        return () => { cancelled = true; };
-    }, [fetchSpec]);
-
-    const hasMore = voters.length < (stats.total || 0);
-
-    // Infinite scroll — sentinel div at bottom triggers next page
+    // Infinite scroll — sentinel div at bottom triggers the next page
     useEffect(() => {
         const sentinel = sentinelRef.current;
         if (!sentinel || !hasMore || loading || loadingMore) return;
-
-        // Snapshot current values so the observer callback is never stale
-        const terms = voterSearchTerms(dQuery);
-        const snap = {
-            filters: filters || {},
-            scope:   scope   || {},
-            status:  status  || undefined,
-            search:  terms.search,
-            search_bn: terms.search_bn,
-            building_feature_id: buildingFilter || undefined,
-            offset:  voters.length,
-        };
-
         const observer = new IntersectionObserver(
             (entries) => {
-                if (entries[0].isIntersecting) {
-                    setFetchSpec({ ...snap, replace: false });
-                }
+                if (entries[0].isIntersecting) listQuery.fetchNextPage();
             },
             { threshold: 0.1 }
         );
-
         observer.observe(sentinel);
         return () => observer.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [hasMore, loading, loadingMore, voters.length,
-        JSON.stringify(filters), JSON.stringify(scope), status, dQuery, buildingFilter]);
+    }, [hasMore, loading, loadingMore, voters.length]);
 
     const remaining = (stats.total || 0) - (stats.visited || 0);
 

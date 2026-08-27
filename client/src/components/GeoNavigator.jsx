@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
-import * as votersApi from '../api/voters.js';
+import { useEffect, useMemo } from 'react';
 import MultiSelect from './MultiSelect.jsx';
+import { useGeoOptions } from '../hooks/queries/index.js';
 
 const BN = '০১২৩৪৫৬৭৮৯';
 const toBn = (s) => String(s).replace(/[0-9]/g, (d) => BN[+d]);
@@ -16,46 +16,34 @@ const toBn = (s) => String(s).replace(/[0-9]/g, (d) => BN[+d]);
  *   value        — { ward: string[], voter_area: string[] }
  *   onChange     — (nextScope) => void
  */
-export default function GeoNavigator({ candidateId, value, onChange }) {
+export default function GeoNavigator({ value, onChange }) {
     const scope = value || { ward: [], voter_area: [] };
     const wards = scope.ward || [];
     const areas = scope.voter_area || [];
 
-    const [wardOpts, setWardOpts] = useState([]);
-    const [areaOpts, setAreaOpts] = useState([]);
-    const [loadingW, setLoadingW] = useState(false);
-    const [loadingA, setLoadingA] = useState(false);
+    // Shared cached queries — DynamicMap requests the same geoOptions([]) on the
+    // same screen; both now read one cache entry instead of firing twice.
+    const wardsQuery = useGeoOptions([]);
+    const areasQuery = useGeoOptions(wards, { enabled: wards.length > 0 });
 
-    // Load ward options on mount / candidate switch.
-    useEffect(() => {
-        let cancelled = false;
-        setLoadingW(true);
-        votersApi.geoOptions([])
-            .then((r) => { if (!cancelled) setWardOpts((r.wards || []).map((w) => ({ value: w.value, label: `ওয়ার্ড ${w.value} (${toBn(w.count)})`, count: null }))); })
-            .catch(() => { if (!cancelled) setWardOpts([]); })
-            .finally(() => { if (!cancelled) setLoadingW(false); });
-        return () => { cancelled = true; };
-    }, [candidateId]);
+    const wardOpts = useMemo(
+        () => (wardsQuery.data?.wards || []).map((w) => ({ value: w.value, label: `ওয়ার্ড ${w.value} (${toBn(w.count)})`, count: null })),
+        [wardsQuery.data]
+    );
+    const areaOpts = useMemo(
+        () => (wards.length === 0 ? [] : (areasQuery.data?.voter_areas || []).map((a) => ({ value: a.value, label: a.value, count: a.count }))),
+        [areasQuery.data, wards.length]
+    );
+    const loadingW = wardsQuery.isLoading;
+    const loadingA = wards.length > 0 && areasQuery.isLoading;
 
-    // Load voter-area options whenever the selected wards change.
+    // Drop any selected areas that are no longer available for the chosen wards.
     useEffect(() => {
-        let cancelled = false;
-        if (wards.length === 0) { setAreaOpts([]); return; }
-        setLoadingA(true);
-        votersApi.geoOptions(wards)
-            .then((r) => {
-                if (cancelled) return;
-                const opts = (r.voter_areas || []).map((a) => ({ value: a.value, label: a.value, count: a.count }));
-                setAreaOpts(opts);
-                // Drop any selected areas that are no longer available.
-                const valid = new Set(opts.map((o) => o.value));
-                const keep = areas.filter((a) => valid.has(a));
-                if (keep.length !== areas.length) onChange({ ward: wards, voter_area: keep });
-            })
-            .catch(() => { if (!cancelled) setAreaOpts([]); })
-            .finally(() => { if (!cancelled) setLoadingA(false); });
-        return () => { cancelled = true; };
-    }, [JSON.stringify(wards), candidateId]); // eslint-disable-line react-hooks/exhaustive-deps
+        if (wards.length === 0 || !areasQuery.data) return;
+        const valid = new Set(areaOpts.map((o) => o.value));
+        const keep = areas.filter((a) => valid.has(a));
+        if (keep.length !== areas.length) onChange({ ward: wards, voter_area: keep });
+    }, [areasQuery.data, areaOpts]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const setWards = (next) => onChange({ ward: next, voter_area: areas });
     const setAreas = (next) => onChange({ ward: wards, voter_area: next });

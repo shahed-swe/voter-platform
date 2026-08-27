@@ -10,6 +10,8 @@ import * as onboardingApi from '../../api/onboarding.js';
 import * as analyticsApi from '../../api/analytics.js';
 import * as layersApi from '../../api/layers.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
+import { useQueryClient } from '@tanstack/react-query';
+import { keys } from '../../api/queryKeys.js';
 
 /**
  * Per-layer data import. For the active candidate, lists every layer from its
@@ -18,6 +20,7 @@ import { useAuth } from '../../auth/AuthContext.jsx';
  */
 export default function ImportDataPage() {
     const { user, candidate } = useAuth();
+    const queryClient = useQueryClient();
     const [layers, setLayers]   = useState(null);
     const [voterCount, setVoterCount] = useState(0);
     const [error, setError]     = useState(null);
@@ -31,6 +34,16 @@ export default function ImportDataPage() {
         analyticsApi.overview()
             .then((d) => setVoterCount(Number(d?.overview?.total_voters || 0)))
             .catch(() => setVoterCount(0));
+    }
+
+    // A completed import changes geo layers / option lists that other pages
+    // cache as STATIC — drop this candidate's whole cache subtree so they
+    // refetch the freshly imported data.
+    function afterImport() {
+        if (candidate?.candidate_id) {
+            queryClient.removeQueries({ queryKey: keys.candidate(candidate.candidate_id) });
+        }
+        reload();
     }
     useEffect(() => { reload(); }, []);
 
@@ -113,7 +126,7 @@ export default function ImportDataPage() {
                             layers={layers}
                             expanded={active === l.layer_key}
                             onToggle={() => setActive(active === l.layer_key ? null : l.layer_key)}
-                            onImported={reload}
+                            onImported={afterImport}
                         />
                     ))}
                 </div>
@@ -121,7 +134,7 @@ export default function ImportDataPage() {
 
             {/* Voters — always available, independent of geo layers */}
             <div className="max-w-3xl mt-6">
-                <VoterImport voterCount={voterCount} onImported={reload} />
+                <VoterImport voterCount={voterCount} onImported={afterImport} />
             </div>
 
             {/* Filters — pick which voter columns become left-panel filters */}

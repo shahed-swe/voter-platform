@@ -11,9 +11,10 @@ import AssignUserCard from '../components/dashboard/AssignUserCard.jsx';
 import CanvassedVotersModal from '../components/dashboard/CanvassedVotersModal.jsx';
 import { LoadingState, ErrorState } from '../components/LoadingState.jsx';
 
-import * as geoApi from '../api/geo.js';
 import * as urbanApi from '../api/urban.js';
-import * as adminApi from '../api/admin.js';
+import { useQueryClient } from '@tanstack/react-query';
+import { useAuth } from '../auth/AuthContext.jsx';
+import { fetchWardsGeo, fetchVoterAreasGeo, fetchBuildingsGeo, fetchUsers } from '../hooks/queries/index.js';
 
 // ---- Dedupe voter areas by village_name -------------------------------
 // Production has each voter area duplicated (union='<ward>' + union='X (Part)').
@@ -85,6 +86,10 @@ const pollingIcon = L.divIcon({
 });
 
 export default function UrbanDashboard() {
+    const queryClient = useQueryClient();
+    const { candidate } = useAuth();
+    const cid = candidate?.candidate_id;
+
     // --- state ---
     const [wardsGeo, setWardsGeo]                 = useState(null);
     const [voterAreasGeo, setVoterAreasGeo]       = useState(null);
@@ -100,10 +105,13 @@ export default function UrbanDashboard() {
     const [showPolling, setShowPolling]           = useState(false);
     const [activeBuilding, setActiveBuilding]     = useState(null);
 
-    // --- initial load: wards + users ---
+    // --- initial load: wards + users (cache-shared with the canvassing page) ---
     useEffect(() => {
         let cancelled = false;
-        Promise.all([geoApi.wards(), adminApi.listUsers({ is_active: true, limit: 500 })])
+        Promise.all([
+            fetchWardsGeo(queryClient, cid),
+            fetchUsers(queryClient, cid, { is_active: true, limit: 500 }),
+        ])
             .then(([wards, usersResp]) => {
                 if (cancelled) return;
                 setWardsGeo(wards);
@@ -112,7 +120,7 @@ export default function UrbanDashboard() {
             .catch((err) => !cancelled && setError(err))
             .finally(() => !cancelled && setLoadingBase(false));
         return () => { cancelled = true; };
-    }, []);
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     // --- load voter areas when ward(s) are selected — multi-ward merge ---
     useEffect(() => {
@@ -123,7 +131,7 @@ export default function UrbanDashboard() {
             return;
         }
         setLoadingScope(true);
-        Promise.all(wardIds.map((id) => geoApi.voterAreas({ ward_id: id })))
+        Promise.all(wardIds.map((id) => fetchVoterAreasGeo(queryClient, cid, id)))
             .then((parts) => {
                 const merged = { type: 'FeatureCollection', features: parts.flatMap((p) => p.features || []) };
                 setVoterAreasGeo(dedupeVoterAreas(merged));
@@ -148,7 +156,7 @@ export default function UrbanDashboard() {
             }
         }
         setLoadingScope(true);
-        Promise.all([...allIds].map((id) => geoApi.buildings(id)))
+        Promise.all([...allIds].map((id) => fetchBuildingsGeo(queryClient, cid, id)))
             .then((parts) => {
                 const features = parts.flatMap((p) => p.features || []);
                 setBuildingsGeo({ type: 'FeatureCollection', features });
