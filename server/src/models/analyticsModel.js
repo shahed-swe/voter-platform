@@ -25,6 +25,10 @@ function canvassFilter(filters = {}, params, { hasVoters = false, alias = 'c' } 
         params.push(filters.canvasserId);
         parts.push(`${alias}.user_id = $${params.length}`);
     }
+    if (filters.canvasserIds?.length) {
+        params.push(filters.canvasserIds);
+        parts.push(`${alias}.user_id = ANY($${params.length}::bigint[])`);
+    }
     if (filters.incomeBracket) {
         params.push(filters.incomeBracket);
         parts.push(`${alias}.income_bracket = $${params.length}`);
@@ -67,6 +71,12 @@ async function overview(candidateId, { politicalCandidateId = null, filters = {}
             (SELECT COUNT(DISTINCT c.user_id) FROM canvassing c
                JOIN voters v ON v.voter_id = c.voter_id
               WHERE ${where} ${jf})                                                        AS active_canvassers,
+            (SELECT COUNT(DISTINCT c.voter_id) FROM canvassing c
+               JOIN voters v ON v.voter_id = c.voter_id
+              WHERE ${where} ${jf} AND c.support_rating = 5)                               AS strong_support,
+            (SELECT COUNT(DISTINCT c.voter_id) FROM canvassing c
+               JOIN voters v ON v.voter_id = c.voter_id
+              WHERE ${where} ${jf} AND (c.is_undecided = true OR c.support_rating = 3))    AS undecided,
             (SELECT COUNT(*) FROM voters WHERE candidate_id = $1 AND gender = 'Male')       AS male_voters,
             (SELECT COUNT(*) FROM voters WHERE candidate_id = $1 AND gender = 'Female')     AS female_voters`,
         params
@@ -155,7 +165,9 @@ async function canvasserPerformance(candidateId, { limit = 50, politicalCandidat
         `SELECT u.user_id, u.name, u.username, u.role,
                 COUNT(c.canvass_id) AS canvasses,
                 COUNT(DISTINCT c.voter_id) AS unique_voters,
-                COUNT(*) FILTER (WHERE c.support_rating >= 4) AS strong_support
+                COUNT(*) FILTER (WHERE c.support_rating >= 4) AS strong_support,
+                COUNT(*) FILTER (WHERE c.follow_up_needed = true) AS follow_ups,
+                COUNT(DISTINCT DATE(c.canvass_date)) AS active_days
            FROM canvassing c
            JOIN voters v ON v.voter_id = c.voter_id
            JOIN users u  ON u.user_id  = c.user_id
@@ -177,7 +189,7 @@ async function dailyTrends(candidateId, { days = 30, politicalCandidateId = null
         rangeClause = `AND c.canvass_date >= NOW() - ($${params.length}::int || ' days')::interval`;
     }
     return many(
-        `SELECT DATE(c.canvass_date) AS day, COUNT(*) AS canvasses, COUNT(DISTINCT c.user_id) AS active_users
+        `SELECT DATE(c.canvass_date) AS day, COUNT(*) AS canvasses, COUNT(DISTINCT c.voter_id) AS unique_voters, COUNT(DISTINCT c.user_id) AS active_users
            FROM canvassing c JOIN voters v ON v.voter_id = c.voter_id
           WHERE ${where} ${jf} ${rangeClause}
           GROUP BY day ORDER BY day`,
@@ -207,17 +219,85 @@ async function canvassingRecords(candidateId, { limit = 200, offset = 0, politic
     params.push(offset); const offsetIdx = params.length;
     return many(
         `SELECT c.canvass_id, c.voter_id, c.support_level, c.support_rating, c.income_bracket,
-                c.canvass_date, c.latitude, c.longitude,
+                c.issues_concerns, c.canvass_date, c.latitude, c.longitude,
                 v.name AS voter_name, v.sos_vid, v.gender, v.age, v.voter_area_name,
-                u.name AS canvasser_name
+                u.name AS canvasser_name,
+                COALESCE(mf.photo_count, 0) AS photo_count,
+                COALESCE(mf.audio_count, 0) AS audio_count
            FROM canvassing c
            JOIN voters v ON v.voter_id = c.voter_id
            JOIN users u  ON u.user_id  = c.user_id
+           LEFT JOIN (
+               SELECT canvass_id,
+                      COUNT(*) FILTER (WHERE file_type = 'photo')::int AS photo_count,
+                      COUNT(*) FILTER (WHERE file_type = 'audio')::int AS audio_count
+                 FROM media_files GROUP BY canvass_id
+           ) mf ON mf.canvass_id = c.canvass_id
           WHERE ${where} ${jf}
           ORDER BY c.canvass_date DESC
           LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
         params
     );
+}
+
+// Row-level issue list (Tab 2): every canvass that recorded an issue/concern.
+async function issuesRecords(candidateId, { limit = 100, offset = 0, politicalCandidateId = null, filters = {} } = {}) {
+    const { params, where } = scoped(candidateId, politicalCandidateId);
+    const jf = canvassFilter(filters, params, { hasVoters: true });
+    const base = `FROM canvassing c
+           JOIN voters v ON v.voter_id = c.voter_id
+           JOIN users u  ON u.user_id  = c.user_id
+          WHERE ${where} ${jf} AND c.issues_concerns IS NOT NULL AND c.issues_concerns <> ''`;
+    const totalRow = await one(`SELECT COUNT(*)::int AS total ${base}`, params);
+    params.push(limit); const limitIdx = params.length;
+    params.push(offset); const offsetIdx = params.length;
+    const records = await many(
+        `SELECT c.canvass_id, c.voter_id, c.issues_concerns, c.support_level, c.support_rating,
+                c.canvass_date, v.name AS voter_name, v.sos_vid, v.voter_area_name,
+                u.name AS canvasser_name
+           ${base}
+          ORDER BY c.canvass_date DESC
+          LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+        params
+    );
+    return { records, total: totalRow?.total || 0 };
+}
+
+// Top occupations among canvassed voters (from the flexible attributes JSON,
+// where the import provided one). Empty result when the roll has no such column.
+async function occupations(candidateId, { limit = 10, politicalCandidateId = null, filters = {} } = {}) {
+    const { params, where } = scoped(candidateId, politicalCandidateId);
+    const jf = canvassFilter(filters, params, { hasVoters: true });
+    params.push(limit);
+    const limitIdx = params.length;
+    return many(
+        `SELECT occ AS occupation, COUNT(DISTINCT voter_id)::int AS count
+           FROM (
+             SELECT DISTINCT c.voter_id,
+                    COALESCE(NULLIF(v.attributes->>'occupation', ''),
+                             NULLIF(v.attributes->>'Occupation', ''),
+                             NULLIF(v.attributes->>'পেশা', '')) AS occ
+               FROM canvassing c JOIN voters v ON v.voter_id = c.voter_id
+              WHERE ${where} ${jf}
+           ) t
+          WHERE occ IS NOT NULL
+          GROUP BY occ ORDER BY count DESC
+          LIMIT $${limitIdx}`,
+        params
+    );
+}
+
+/** Total row count for canvassingRecords under the same filters (for pagination). */
+async function canvassingRecordsTotal(candidateId, { politicalCandidateId = null, filters = {} } = {}) {
+    const { params, where } = scoped(candidateId, politicalCandidateId);
+    const jf = canvassFilter(filters, params, { hasVoters: true });
+    const row = await one(
+        `SELECT COUNT(*)::int AS total
+           FROM canvassing c JOIN voters v ON v.voter_id = c.voter_id
+          WHERE ${where} ${jf}`,
+        params
+    );
+    return row?.total || 0;
 }
 
 // Distinct canvassers (for the filter dropdown), scoped to the political candidate.
@@ -240,6 +320,9 @@ module.exports = {
     canvasserPerformance,
     dailyTrends,
     issues,
+    issuesRecords,
+    occupations,
     canvassingRecords,
+    canvassingRecordsTotal,
     canvasserOptions,
 };
