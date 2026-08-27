@@ -2,6 +2,7 @@
 // Driven by a `mapping` produced by the column-mapping UI.
 
 const { pool } = require('../../db/pool');
+const { geometryBboxCenter } = require('../../utils/geometry');
 
 /**
  * mapping shape:
@@ -85,6 +86,16 @@ async function ingestGeoLayer({
                     parentFid = mapping.parent_feature_id ? String(get('parent_feature_id') ?? '') || null : null;
                 }
 
+                // Centroid columns: mapped source values win; otherwise derive the
+                // bbox center from the geometry so spatial lookups (e.g. the
+                // GPS→building canvass snap) can prefilter on plain lat/lng.
+                let latVal = flt(get('latitude'));
+                let lngVal = flt(get('longitude'));
+                if ((latVal == null || lngVal == null) && row.__geometry__) {
+                    const center = geometryBboxCenter(row.__geometry__);
+                    if (center) [latVal, lngVal] = center;
+                }
+
                 const tupleVals = [
                     candidateId,
                     layerKey,
@@ -96,8 +107,8 @@ async function ingestGeoLayer({
                     num(get('total_population')),
                     num(get('male_count')),
                     num(get('female_count')),
-                    flt(get('latitude')),
-                    flt(get('longitude')),
+                    latVal,
+                    lngVal,
                     geometry,
                     JSON.stringify(props),
                 ];

@@ -1,4 +1,5 @@
 const { query, one, many, withTransaction } = require('../db/pool');
+const { pointInGeometry, geometryBboxCenter, metersBetween } = require('../utils/geometry');
 
 // Every read below is scoped to (constituency, political candidate). When
 // politicalCandidateId is null (super-admin or single-candidate constituency)
@@ -121,8 +122,59 @@ async function stats(candidateId, politicalCandidateId = null) {
     );
 }
 
+// ── GPS → building auto-snap ────────────────────────────────────────────────
+// No PostGIS: candidate buildings come from a centroid bounding-box query and
+// the exact match is decided in JS (point-in-polygon over the GeoJSON footprint,
+// else nearest building within SNAP_MAX_METERS).
+
+const SNAP_MAX_METERS = 50; // typical urban GPS error; beyond this, don't guess
+
+async function matchBuildingByPoint(client, candidateId, lat, lng) {
+    // ±0.0012° ≈ 130 m box around the fix — wide enough that a large footprint's
+    // centroid still falls inside even when the fix is near the building's edge.
+    const { rows } = await client.query(
+        `SELECT feature_id, latitude, longitude, geometry
+           FROM geo_layers
+          WHERE candidate_id = $1 AND layer_key = 'building'
+            AND latitude  BETWEEN $2 - 0.0012 AND $2 + 0.0012
+            AND longitude BETWEEN $3 - 0.0012 AND $3 + 0.0012`,
+        [candidateId, lat, lng]
+    );
+    let best = null;
+    for (const row of rows) {
+        const center = geometryBboxCenter(row.geometry) ||
+            (Number.isFinite(row.latitude) ? [row.latitude, row.longitude] : null);
+        if (!center) continue;
+        const contains = pointInGeometry(lng, lat, row.geometry);
+        const dist = metersBetween(lat, lng, center[0], center[1]);
+        if (!contains && dist > SNAP_MAX_METERS) continue;
+        // Containment always beats proximity; among equals, nearest center wins.
+        if (!best || (contains && !best.contains) || (contains === best.contains && dist < best.dist)) {
+            best = { feature_id: row.feature_id, center, contains, dist };
+        }
+    }
+    return best;
+}
+
 async function submit(candidateId, { voterId, userId, politicalCandidateId, payload }) {
     return withTransaction(async (client) => {
+        // Volunteer surveyed without picking a building on the map: attach the
+        // canvass to the building at their GPS fix, and snap the coordinates to
+        // that building's center so the voter's pin lands on it like a
+        // click-selected building would.
+        const lat = Number(payload.latitude);
+        const lng = Number(payload.longitude);
+        if (!payload.building_feature_id && Number.isFinite(lat) && Number.isFinite(lng) && (lat !== 0 || lng !== 0)) {
+            const hit = await matchBuildingByPoint(client, candidateId, lat, lng);
+            if (hit) {
+                payload = {
+                    ...payload,
+                    building_feature_id: hit.feature_id,
+                    latitude: hit.center[0],
+                    longitude: hit.center[1],
+                };
+            }
+        }
         const insert = await client.query(
             `INSERT INTO canvassing (
                 candidate_id, political_candidate_id,

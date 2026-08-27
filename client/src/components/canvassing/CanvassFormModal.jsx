@@ -601,6 +601,12 @@ export default function CanvassFormModal({ voter, building, onClose, onSubmitted
                             <input className="input-field" placeholder="ফ্ল্যাট" value={form.flat_number} onChange={update('flat_number')} />
                             <input className="input-field" placeholder="ঠিকানা" value={form.address} onChange={update('address')} />
                         </div>
+                        {building?.building_id == null && (
+                            <p className="text-[11px] text-gray-500 mt-1.5 bn">
+                                <i className="fas fa-wand-magic-sparkles mr-1 text-gray-400" />
+                                ভবন নির্বাচন করা হয়নি — GPS ক্যাপচার করলে আপনার অবস্থানের ভবনে স্বয়ংক্রিয়ভাবে যুক্ত হবে।
+                            </p>
+                        )}
                         {building?.building_id != null && (
                             <p className="text-[11px] text-gray-500 mt-1.5 bn">
                                 <i className="fas fa-building mr-1 text-gray-400" />
