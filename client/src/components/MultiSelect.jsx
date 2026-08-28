@@ -15,7 +15,8 @@ import { createPortal } from 'react-dom';
  */
 export default function MultiSelect({
     options = [], value = [], onChange, placeholder = 'নির্বাচন করুন',
-    loading = false, disabled = false, searchable, size = 'md', bn = false,
+    loading = false, loadingLabel = 'লোড হচ্ছে...', disabled = false,
+    searchable, size = 'md', bn = false,
 }) {
     const [open, setOpen]     = useState(false);
     const [search, setSearch] = useState('');
@@ -59,14 +60,27 @@ export default function MultiSelect({
         <div className="relative" ref={ref}>
             <button
                 type="button"
-                className={`w-full border border-gray-300 rounded-md bg-white text-left flex items-center justify-between ${pad} ${disabled ? 'opacity-60' : ''}`}
+                aria-busy={loading}
+                className={`w-full border rounded-md text-left flex items-center justify-between ${pad} ${
+                    loading
+                        ? 'border-brand/30 bg-brand/5 cursor-wait'
+                        : `border-gray-300 bg-white ${disabled ? 'opacity-60' : ''}`
+                }`}
                 onClick={() => !disabled && openMenu()}
                 disabled={disabled || loading}
             >
-                <span className={`${value.length ? 'text-gray-800' : 'text-gray-400'} ${bn ? 'bn' : ''} truncate`}>
-                    {loading ? 'লোড হচ্ছে...' : value.length ? `${value.length} নির্বাচিত` : placeholder}
-                </span>
-                <i className={`fas fa-chevron-${open ? 'up' : 'down'} text-xs text-gray-400 ml-1`} />
+                {loading ? (
+                    // Unmistakable loading state: brand spinner + label, tinted field.
+                    <span className={`flex items-center gap-2 text-gray-600 ${bn ? 'bn' : ''}`}>
+                        <span className="h-3.5 w-3.5 flex-shrink-0 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+                        {loadingLabel}
+                    </span>
+                ) : (
+                    <span className={`${value.length ? 'text-gray-800' : 'text-gray-400'} ${bn ? 'bn' : ''} truncate`}>
+                        {value.length ? `${value.length} নির্বাচিত` : placeholder}
+                    </span>
+                )}
+                {!loading && <i className={`fas fa-chevron-${open ? 'up' : 'down'} text-xs text-gray-400 ml-1`} />}
             </button>
 
             {open && !loading && createPortal(

@@ -196,7 +196,7 @@ const FILTERS = {
     ward:       { via: 'voters',    col: 'ward' },          // dhaka13 voters store ward_number
 };
 
-async function findByFilters(candidateId, { filters = {}, specs = [], status, search, searchBn = null, limit = 500, offset = 0, politicalCandidateId = null, statsOnly = false } = {}) {
+async function findByFilters(candidateId, { filters = {}, specs = [], status, search, searchBn = null, limit = 500, offset = 0, politicalCandidateId = null, statsOnly = false, buildingFeatureId = null } = {}) {
     const where  = ['v.candidate_id = $1'];
     const params = [candidateId];
     let i = 2;
@@ -256,14 +256,26 @@ async function findByFilters(candidateId, { filters = {}, specs = [], status, se
         where.push(`(${parts.join(' OR ')})`);
     }
 
-    const whereSql = `WHERE ${where.join(' AND ')}`;
-
     // Canvass status is ALWAYS derived from the canvassing table (never the shared
     // voters.status column, which isn't maintained once a constituency has multiple
     // political candidates), scoped to the active political candidate — or, when
     // none is set (super-admin), any canvass in the constituency.
     params.push(politicalCandidateId);      // may be null → "any political candidate"
     const pcIdx = params.length;
+
+    // Building filter — only voters with a canvass at this geo building (the
+    // "show only this building's voters" toggle after a building is selected).
+    if (buildingFeatureId) {
+        params.push(String(buildingFeatureId));
+        where.push(`EXISTS (
+            SELECT 1 FROM canvassing cb
+             WHERE cb.voter_id = v.voter_id
+               AND cb.candidate_id = $1
+               AND ($${pcIdx}::bigint IS NULL OR cb.political_candidate_id = $${pcIdx})
+               AND cb.building_feature_id = $${params.length})`);
+    }
+
+    const whereSql = `WHERE ${where.join(' AND ')}`;
     i = params.length + 1;
 
     // Fast stats: a plain voter COUNT for the total, plus a small DISTINCT-ON over

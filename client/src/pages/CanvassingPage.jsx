@@ -12,7 +12,7 @@ import { LoadingState } from '../components/LoadingState.jsx';
  */
 export default function CanvassingPage() {
     const { candidate, loading } = useAuth();
-    if (loading) return <LoadingState />;
+    if (loading) return <LoadingState full />;
 
     const mc = candidate?.map_config || {};
     if (Array.isArray(mc.layers) && mc.layers.length > 0) return <DynamicCanvassing />;

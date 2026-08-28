@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import VoterCard from './VoterCard.jsx';
 import * as votersApi from '../../api/voters.js';
-import { LoadingState, EmptyState, ErrorState } from '../LoadingState.jsx';
+import { SkeletonList, EmptyState, ErrorState } from '../LoadingState.jsx';
+import useDebounce from '../../hooks/useDebounce.js';
 
 const BN_DIGITS = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
 const toBn = (s) => String(s ?? '').replace(/[0-9]/g, (d) => BN_DIGITS[+d]);
@@ -25,16 +26,6 @@ const TABS = [
     { key: 'Visited',           label: 'পরিদর্শিত'         },
     { key: 'Follow-up needed',  label: 'ফলো-আপ প্রয়োজন'   },
 ];
-
-// Debounce search input
-function useDebounce(value, ms = 300) {
-    const [v, setV] = useState(value);
-    useEffect(() => {
-        const id = setTimeout(() => setV(value), ms);
-        return () => clearTimeout(id);
-    }, [value, ms]);
-    return v;
-}
 
 export default function VoterListPanel({ scopeAreas, scopeLabel, building, onClearBuilding, onPickVoter }) {
     const [query, setQuery]       = useState('');
@@ -156,7 +147,7 @@ export default function VoterListPanel({ scopeAreas, scopeLabel, building, onCle
                 {!hasScope ? (
                     <EmptyState icon="fa-location-dot" label="Pick a voter area from the left to load voters." />
                 ) : loading ? (
-                    <LoadingState />
+                    <SkeletonList rows={5} lines={3} />
                 ) : error ? (
                     <ErrorState error={error} />
                 ) : data.voters.length === 0 ? (

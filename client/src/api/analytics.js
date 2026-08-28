@@ -12,3 +12,5 @@ export const dailyTrends           = (params)   => client.get('/analytics/daily-
 export const issues                = (params)   => client.get('/analytics/issues', { params }).then((r) => r.data);
 export const canvassingRecords     = (params)   => client.get('/analytics/canvassing-records', { params }).then((r) => r.data);
 export const canvassers            = ()         => client.get('/analytics/canvassers').then((r) => r.data);
+export const issuesRecords         = (params)   => client.get('/analytics/issues-records', { params }).then((r) => r.data);
+export const occupations           = (params)   => client.get('/analytics/occupations', { params }).then((r) => r.data);

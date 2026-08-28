@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
-import * as votersApi from '../api/voters.js';
+import { useEffect, useMemo } from 'react';
 import MultiSelect from './MultiSelect.jsx';
+import { useGeoOptions } from '../hooks/queries/index.js';
 
 const BN = '০১২৩৪৫৬৭৮৯';
 const toBn = (s) => String(s).replace(/[0-9]/g, (d) => BN[+d]);
@@ -16,46 +16,34 @@ const toBn = (s) => String(s).replace(/[0-9]/g, (d) => BN[+d]);
  *   value        — { ward: string[], voter_area: string[] }
  *   onChange     — (nextScope) => void
  */
-export default function GeoNavigator({ candidateId, value, onChange }) {
+export default function GeoNavigator({ value, onChange }) {
     const scope = value || { ward: [], voter_area: [] };
     const wards = scope.ward || [];
     const areas = scope.voter_area || [];
 
-    const [wardOpts, setWardOpts] = useState([]);
-    const [areaOpts, setAreaOpts] = useState([]);
-    const [loadingW, setLoadingW] = useState(false);
-    const [loadingA, setLoadingA] = useState(false);
+    // Shared cached queries — DynamicMap requests the same geoOptions([]) on the
+    // same screen; both now read one cache entry instead of firing twice.
+    const wardsQuery = useGeoOptions([]);
+    const areasQuery = useGeoOptions(wards, { enabled: wards.length > 0 });
 
-    // Load ward options on mount / candidate switch.
-    useEffect(() => {
-        let cancelled = false;
-        setLoadingW(true);
-        votersApi.geoOptions([])
-            .then((r) => { if (!cancelled) setWardOpts((r.wards || []).map((w) => ({ value: w.value, label: `ওয়ার্ড ${w.value} (${toBn(w.count)})`, count: null }))); })
-            .catch(() => { if (!cancelled) setWardOpts([]); })
-            .finally(() => { if (!cancelled) setLoadingW(false); });
-        return () => { cancelled = true; };
-    }, [candidateId]);
+    const wardOpts = useMemo(
+        () => (wardsQuery.data?.wards || []).map((w) => ({ value: w.value, label: `ওয়ার্ড ${w.value} (${toBn(w.count)})`, count: null })),
+        [wardsQuery.data]
+    );
+    const areaOpts = useMemo(
+        () => (wards.length === 0 ? [] : (areasQuery.data?.voter_areas || []).map((a) => ({ value: a.value, label: a.value, count: a.count }))),
+        [areasQuery.data, wards.length]
+    );
+    const loadingW = wardsQuery.isLoading;
+    const loadingA = wards.length > 0 && areasQuery.isLoading;
 
-    // Load voter-area options whenever the selected wards change.
+    // Drop any selected areas that are no longer available for the chosen wards.
     useEffect(() => {
-        let cancelled = false;
-        if (wards.length === 0) { setAreaOpts([]); return; }
-        setLoadingA(true);
-        votersApi.geoOptions(wards)
-            .then((r) => {
-                if (cancelled) return;
-                const opts = (r.voter_areas || []).map((a) => ({ value: a.value, label: a.value, count: a.count }));
-                setAreaOpts(opts);
-                // Drop any selected areas that are no longer available.
-                const valid = new Set(opts.map((o) => o.value));
-                const keep = areas.filter((a) => valid.has(a));
-                if (keep.length !== areas.length) onChange({ ward: wards, voter_area: keep });
-            })
-            .catch(() => { if (!cancelled) setAreaOpts([]); })
-            .finally(() => { if (!cancelled) setLoadingA(false); });
-        return () => { cancelled = true; };
-    }, [JSON.stringify(wards), candidateId]); // eslint-disable-line react-hooks/exhaustive-deps
+        if (wards.length === 0 || !areasQuery.data) return;
+        const valid = new Set(areaOpts.map((o) => o.value));
+        const keep = areas.filter((a) => valid.has(a));
+        if (keep.length !== areas.length) onChange({ ward: wards, voter_area: keep });
+    }, [areasQuery.data, areaOpts]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const setWards = (next) => onChange({ ward: next, voter_area: areas });
     const setAreas = (next) => onChange({ ward: wards, voter_area: next });
@@ -85,6 +73,7 @@ export default function GeoNavigator({ candidateId, value, onChange }) {
                         value={wards}
                         onChange={setWards}
                         loading={loadingW}
+                        loadingLabel="ওয়ার্ড লোড হচ্ছে..."
                         placeholder="সব ওয়ার্ড"
                         bn
                     />
@@ -95,21 +84,35 @@ export default function GeoNavigator({ candidateId, value, onChange }) {
                         Voter Area / Village <span className="text-gray-400 normal-case">(একটি)</span>
                     </label>
                     {/* Single-select: picking one area drills the map into that area's buildings. */}
-                    <select
-                        className="w-full border border-gray-300 rounded-md px-2.5 py-2 text-sm bg-white text-gray-800 focus:outline-none focus:ring-1 focus:ring-brand focus:border-brand disabled:bg-gray-50 disabled:text-gray-400 bn"
-                        value={areas[0] || ''}
-                        onChange={(e) => setAreas(e.target.value ? [e.target.value] : [])}
-                        disabled={wards.length === 0 || loadingA}
-                    >
-                        <option value="">
-                            {wards.length === 0 ? 'আগে ওয়ার্ড নির্বাচন করুন' : loadingA ? 'লোড হচ্ছে…' : 'সব এলাকা'}
-                        </option>
-                        {areaOpts.map((o) => (
-                            <option key={o.value} value={o.value}>
-                                {o.label}{o.count ? ` (${toBn(o.count)})` : ''}
+                    <div className="relative">
+                        <select
+                            aria-busy={loadingA}
+                            className={`w-full border rounded-md px-2.5 py-2 text-sm text-gray-800 focus:outline-none focus:ring-1 focus:ring-brand focus:border-brand bn ${
+                                loadingA
+                                    ? 'border-brand/30 bg-brand/5 text-gray-600 cursor-wait'
+                                    : 'border-gray-300 bg-white disabled:bg-gray-50 disabled:text-gray-400'
+                            }`}
+                            value={areas[0] || ''}
+                            onChange={(e) => setAreas(e.target.value ? [e.target.value] : [])}
+                            disabled={wards.length === 0 || loadingA}
+                        >
+                            <option value="">
+                                {wards.length === 0
+                                    ? 'আগে ওয়ার্ড নির্বাচন করুন'
+                                    : loadingA
+                                        ? 'ভোটার এলাকা লোড হচ্ছে...'
+                                        : 'সব এলাকা'}
                             </option>
-                        ))}
-                    </select>
+                            {areaOpts.map((o) => (
+                                <option key={o.value} value={o.value}>
+                                    {o.label}{o.count ? ` (${toBn(o.count)})` : ''}
+                                </option>
+                            ))}
+                        </select>
+                        {loadingA && (
+                            <span className="pointer-events-none absolute right-8 top-1/2 -translate-y-1/2 h-3.5 w-3.5 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+                        )}
+                    </div>
                 </div>
 
                 {(wards.length > 0 || areas.length > 0) && (

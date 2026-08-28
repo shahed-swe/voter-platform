@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import L from 'leaflet';
 import { MapContainer, TileLayer, GeoJSON, useMap, LayersControl, Marker, Popup, Tooltip } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -8,7 +9,8 @@ import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 
 import * as layersApi from '../api/layers.js';
-import * as votersApi from '../api/voters.js';
+import { keys, TIER } from '../api/queryKeys.js';
+import { useGeoOptions } from '../hooks/queries/index.js';
 import CanvassedVotersModal from './dashboard/CanvassedVotersModal.jsx';
 import { LoadingState, ErrorState } from './LoadingState.jsx';
 import { wardLabelToScope } from '../utils/geoScope.js';
@@ -162,6 +164,7 @@ export default function DynamicMap({
     onPinnedVoterClick,  // optional: () => void — fired when the voter pin is clicked
     voterPins,           // optional: voters with canvass_latitude/longitude — ALL shown as pins
     selectedFeatureId,   // optional: feature_id in the deepest layer (e.g. a clicked building) to highlight
+    refreshKey = 0,      // optional: bump to refetch the drilled layer (new building names / canvassed colors after a submit)
     allowedWards,        // optional: string[] (Bengali digits) — restrict the ward layer to these wards only
     focusWards,          // optional: string[] (Bengali digits) — highlight + fit the map to these wards
     focusAreaName,       // optional: a single selected voter_area_name — drill straight to its buildings
@@ -184,24 +187,20 @@ export default function DynamicMap({
     const [activeBuilding, setActiveBuilding] = useState(null);
     const [overlayOn, setOverlayOn]     = useState({});  // overlayId → bool
     const [overlayData, setOverlayData] = useState({});  // overlayId → FeatureCollection
-    const [areaFids, setAreaFids]       = useState({});  // voter_area_name → { village_feature_id, ward_feature_id }
 
-    // Load the curated voter-area → geo (village + ward) mapping once, so selecting
-    // a voter area can drill the map straight to that area's buildings.
-    useEffect(() => {
-        let cancelled = false;
-        votersApi.geoOptions([])
-            .then((r) => {
-                if (cancelled) return;
-                const m = {};
-                for (const a of r.voter_areas || []) {
-                    if (a.village_feature_id) m[a.value] = { village: a.village_feature_id, ward: a.ward_feature_id };
-                }
-                setAreaFids(m);
-            })
-            .catch(() => {});
-        return () => { cancelled = true; };
-    }, [candidateId]);
+    const queryClient = useQueryClient();
+
+    // Curated voter-area → geo (village + ward) mapping, so selecting a voter
+    // area can drill the map straight to that area's buildings. Shared cache
+    // entry with GeoNavigator (which requests the same options on this screen).
+    const geoOptionsQuery = useGeoOptions([]);
+    const areaFids = useMemo(() => {
+        const m = {};
+        for (const a of geoOptionsQuery.data?.voter_areas || []) {
+            if (a.village_feature_id) m[a.value] = { village: a.village_feature_id, ward: a.ward_feature_id };
+        }
+        return m;
+    }, [geoOptionsQuery.data]);
     const [myLocation, setMyLocation]   = useState(null); // [lat, lng] — canvasser's live position (#8)
 
     // Track the canvasser's location. Needs an HTTPS secure context (see docs/HTTPS.md);
@@ -240,7 +239,12 @@ export default function DynamicMap({
         const on = !overlayOn[spec.id];
         setOverlayOn((m) => ({ ...m, [spec.id]: on }));
         if (on && !overlayData[spec.id]) {
-            layersApi.fetchSource(spec.source)
+            queryClient
+                .fetchQuery({
+                    queryKey: keys.layerSource(candidateId, spec.source, null),
+                    queryFn: () => layersApi.fetchSource(spec.source),
+                    ...TIER.STATIC,
+                })
                 .then((d) => setOverlayData((m) => ({ ...m, [spec.id]: d })))
                 .catch(() => {});
         }
@@ -256,22 +260,32 @@ export default function DynamicMap({
     // The currently deepest visible layer
     const deepest = layersSpec[drillStack.length];
 
-    // Fetch root layer whenever candidate changes (no caching)
+    // Fetch root layer whenever candidate changes — served from the query cache
+    // when already loaded (drilling back up / revisiting the page is instant).
     useEffect(() => {
         if (!layersSpec.length) return;
         const root = layersSpec[0];
         let cancelled = false;
         setLoading(true);
         setDataByLayer({});          // clear all stale data first
-        layersApi
-            .fetchSource(root.source)
+        queryClient
+            .fetchQuery({
+                queryKey: keys.layerSource(candidateId, root.source, null),
+                queryFn: () => layersApi.fetchSource(root.source),
+                ...TIER.STATIC,
+            })
             .then((d) => !cancelled && setDataByLayer({ [root.id]: d }))
             .catch((err) => !cancelled && setError(err))
             .finally(() => !cancelled && setLoading(false));
         return () => { cancelled = true; };
     }, [candidateId, JSON.stringify(layersSpec.map((l) => l.id))]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Fetch child layer fresh every time the drill selection changes (no caching)
+    // Fetch the child layer when the drill selection changes — cache-first, so
+    // re-drilling into an already-visited branch does not refetch its GeoJSON.
+    // refreshKey: a canvass submit updates building names + canvassed colors
+    // server-side — drop the cached entries for this source so the drilled
+    // layer refetches and the map reflects them without re-drilling.
+    const lastRefreshKey = useRef(refreshKey);
     useEffect(() => {
         if (!deepest) return;
         const parentStack = drillStack[drillStack.length - 1];
@@ -283,10 +297,19 @@ export default function DynamicMap({
             return;
         }
 
+        if (lastRefreshKey.current !== refreshKey) {
+            lastRefreshKey.current = refreshKey;
+            queryClient.removeQueries({ queryKey: ['c', candidateId, 'layer', deepest.source] });
+        }
+
         let cancelled = false;
         setLoading(true);
-        layersApi
-            .fetchByParent(deepest.source, parentFk, parentStack.id)
+        queryClient
+            .fetchQuery({
+                queryKey: keys.layerSource(candidateId, deepest.source, `${parentFk}=${parentStack.id}`),
+                queryFn: () => layersApi.fetchByParent(deepest.source, parentFk, parentStack.id),
+                ...TIER.STATIC,
+            })
             .then((d) => {
                 if (cancelled) return;
                 // Store result keyed so we can keep parent context layers visible
@@ -296,7 +319,7 @@ export default function DynamicMap({
             .catch((err) => !cancelled && setError(err))
             .finally(() => !cancelled && setLoading(false));
         return () => { cancelled = true; };
-    }, [JSON.stringify(drillStack.map((s) => s.id)), candidateId]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [JSON.stringify(drillStack.map((s) => s.id)), candidateId, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // A single selected voter area that maps to a geo village — the area drill
     // (below) owns the map in that case, so the ward drill must stand down.
@@ -535,10 +558,12 @@ export default function DynamicMap({
                     const isDeepest = i === visibleCount - 1;
                     return (
                         <GeoJSON
-                            // selectedFeatureId is part of the key: GeoJSON styles are
-                            // applied at mount, so remount the (small) deepest layer to
-                            // repaint the selection highlight.
-                            key={`${spec.id}-${i === 0 ? 'root' : drillStack[i - 1]?.id}-${data.features.length}${isDeepest && selectedFeatureId != null ? `-sel${selectedFeatureId}` : ''}`}
+                            // selectedFeatureId + refreshKey are part of the key: GeoJSON
+                            // styles/tooltips are applied at mount, so remount the (small)
+                            // layer to repaint the selection highlight and refreshed data
+                            // (an unchanged feature COUNT would otherwise keep stale
+                            // tooltips even after a refetch).
+                            key={`${spec.id}-${i === 0 ? 'root' : drillStack[i - 1]?.id}-${data.features.length}-r${refreshKey}${isDeepest && selectedFeatureId != null ? `-sel${selectedFeatureId}` : ''}`}
                             data={data}
                             // Some layers mix polygons with Point features (e.g. a
                             // handful of point-only buildings). Render points as styled
@@ -674,18 +699,21 @@ export default function DynamicMap({
             {/* Breadcrumb of drill state — only when NOT externally controlled
                 (GeoNavigator provides its own navigation in that case) */}
             {controlledDrill === undefined && drillStack.length > 0 && (
-                <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[500] bg-white rounded-md shadow-md border border-gray-200 px-3 py-1.5 text-sm flex items-center gap-1">
+                // Single-line breadcrumb: on phones it caps at the viewport and
+                // scrolls horizontally instead of wrapping into a tall block that
+                // collides with the selected-building chip below it.
+                <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[500] bg-white rounded-md shadow-md border border-gray-200 px-3 py-1.5 text-xs sm:text-sm flex items-center gap-1 max-w-[92vw] overflow-x-auto whitespace-nowrap">
                     <button
-                        className="text-brand hover:underline"
+                        className="text-brand hover:underline shrink-0"
                         onClick={() => setDrillStack([])}
                     >
                         {layersSpec[0]?.id}
                     </button>
                     {drillStack.map((s, i) => (
-                        <span key={i} className="flex items-center gap-1">
+                        <span key={i} className="flex items-center gap-1 shrink-0">
                             <i className="fas fa-chevron-right text-gray-300 text-xs" />
                             <button
-                                className={i === drillStack.length - 1 ? 'text-gray-700 font-medium' : 'text-brand hover:underline'}
+                                className={`bn max-w-[38vw] sm:max-w-none truncate ${i === drillStack.length - 1 ? 'text-gray-700 font-medium' : 'text-brand hover:underline'}`}
                                 onClick={() => setDrillStack((stack) => stack.slice(0, i + 1))}
                             >
                                 {s.label || s.id}

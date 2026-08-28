@@ -10,7 +10,9 @@ import ActiveFilterChips from '../components/canvassing/ActiveFilterChips.jsx';
 import CanvassFormModal from '../components/canvassing/CanvassFormModal.jsx';
 import { LoadingState, ErrorState } from '../components/LoadingState.jsx';
 
-import * as geoApi from '../api/geo.js';
+import { useQueryClient } from '@tanstack/react-query';
+import { useAuth } from '../auth/AuthContext.jsx';
+import { fetchWardsGeo, fetchVoterAreasGeo, fetchBuildingsGeo } from '../hooks/queries/index.js';
 
 // --- Dedupe voter areas by village_name (production has each row twice) ---
 function dedupeVoterAreas(geo) {
@@ -82,6 +84,10 @@ function BaseLayerToggle({ value, onChange }) {
 }
 
 export default function UrbanCanvassingPage() {
+    const queryClient = useQueryClient();
+    const { candidate } = useAuth();
+    const cid = candidate?.candidate_id;
+
     const [wardsGeo, setWardsGeo]                 = useState(null);
     const [voterAreasGeoAll, setVoterAreasGeoAll] = useState(null); // all areas (across selected wards)
     const [buildingsGeo, setBuildingsGeo]         = useState(null);
@@ -105,15 +111,15 @@ export default function UrbanCanvassingPage() {
         setActiveBuilding(null);
     }, [wardIds.join(','), voterAreaIds.join(',')]);
 
-    // --- initial load: all wards ---
+    // --- initial load: all wards (cache-shared with the dashboard page) ---
     useEffect(() => {
         let cancelled = false;
-        geoApi.wards()
+        fetchWardsGeo(queryClient, cid)
             .then((data) => !cancelled && setWardsGeo(data))
             .catch((err) => !cancelled && setError(err))
             .finally(() => !cancelled && setLoadingBase(false));
         return () => { cancelled = true; };
-    }, []);
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     // --- load voter areas for selected wards (multi-ward → multi fetch + merge) ---
     useEffect(() => {
@@ -124,7 +130,7 @@ export default function UrbanCanvassingPage() {
             return;
         }
         setLoadingScope(true);
-        Promise.all(wardIds.map((id) => geoApi.voterAreas({ ward_id: id })))
+        Promise.all(wardIds.map((id) => fetchVoterAreasGeo(queryClient, cid, id)))
             .then((parts) => {
                 const merged = { type: 'FeatureCollection', features: parts.flatMap((p) => p.features || []) };
                 setVoterAreasGeoAll(dedupeVoterAreas(merged));
@@ -147,7 +153,7 @@ export default function UrbanCanvassingPage() {
             }
         }
         setLoadingScope(true);
-        Promise.all([...allIds].map((id) => geoApi.buildings(id)))
+        Promise.all([...allIds].map((id) => fetchBuildingsGeo(queryClient, cid, id)))
             .then((parts) => {
                 const features = parts.flatMap((p) => p.features || []);
                 setBuildingsGeo({ type: 'FeatureCollection', features });
@@ -235,7 +241,7 @@ export default function UrbanCanvassingPage() {
         return wardsGeo?.features || [];
     }, [mode, wardIds, voterAreaIds, wardsGeo, voterAreasGeoAll]);
 
-    if (loadingBase) return <LoadingState />;
+    if (loadingBase) return <LoadingState full />;
     if (error)       return <ErrorState error={error} onRetry={() => window.location.reload()} />;
 
     return (
@@ -383,7 +389,7 @@ export default function UrbanCanvassingPage() {
             </div>
 
             {/* Left filter panel */}
-            <aside className="absolute left-4 top-4 bottom-4 w-[280px] z-[400] space-y-3 overflow-y-auto pr-1">
+            <aside className="absolute left-4 top-4 bottom-4 w-[min(85vw,280px)] z-[400] space-y-3 overflow-y-auto pr-1">
                 <WardMultiSelect
                     wards={(wardsGeo?.features || []).map((f) => ({
                         ward_id: String(f.properties.ward_id),
@@ -406,7 +412,7 @@ export default function UrbanCanvassingPage() {
             </aside>
 
             {/* Right voter list panel */}
-            <aside className="absolute right-4 top-4 bottom-4 w-[380px] z-[400]">
+            <aside className="absolute right-4 top-4 bottom-4 w-[min(94vw,380px)] z-[400]">
                 <VoterListPanel
                     scopeAreas={scopeAreas}
                     scopeLabel={scopeLabel}

@@ -1,9 +1,11 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import * as peopleApi from '../../api/people.js';
 import * as layersApi from '../../api/layers.js';
+import { keys, TIER } from '../../api/queryKeys.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { wardLabelToScope } from '../../utils/geoScope.js';
-import { LoadingState, ErrorState, EmptyState, Spinner } from '../../components/LoadingState.jsx';
+import { SkeletonList, Skeleton, ErrorState, EmptyState, Spinner } from '../../components/LoadingState.jsx';
 
 /**
  * Resolve the ward layer (source + label field) for the active constituency
@@ -221,7 +223,7 @@ function AddVolunteerModal({ constituencyId, onClose, onAdded, wardOptions, ward
                                 <label className="block text-xs font-medium text-gray-600 mb-1">পূর্ণ নাম *</label>
                                 <input className={INPUT} required value={form.name} onChange={set('name')} />
                             </div>
-                            <div className="grid grid-cols-2 gap-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <div>
                                     <label className="block text-xs font-medium text-gray-600 mb-1">Username *</label>
                                     <input className={INPUT} required value={form.username} onChange={set('username')} />
@@ -325,6 +327,7 @@ function EditWardsModal({ volunteer, constituencyId, onClose, onSaved, wardOptio
 
 export default function VolunteerManagementPage() {
     const { user, candidate } = useAuth();
+    const queryClient = useQueryClient();
     const [volunteers, setVolunteers] = useState(null);
     const [error, setError]           = useState(null);
     const [showAdd, setShowAdd]       = useState(false);
@@ -348,13 +351,19 @@ export default function VolunteerManagementPage() {
 
     useEffect(() => { reload(); }, [reload]);
 
-    // Load the constituency's wards for the assignment dropdown.
+    // Load the constituency's wards for the assignment dropdown. Same cache
+    // entry as the map's root ward layer — visiting the dashboard first makes
+    // this a cache hit instead of a second full-GeoJSON download.
     useEffect(() => {
         const wardLayer = wardLayerOf(candidate);
         if (!wardLayer) { setWardOptions([]); return; }
         let cancelled = false;
         setWardsLoading(true);
-        layersApi.fetchSource(wardLayer.source)
+        queryClient.fetchQuery({
+            queryKey: keys.layerSource(constituencyId, wardLayer.source, null),
+            queryFn: () => layersApi.fetchSource(wardLayer.source),
+            ...TIER.STATIC,
+        })
             .then((fc) => {
                 if (cancelled) return;
                 const seen = new Set();
@@ -384,11 +393,18 @@ export default function VolunteerManagementPage() {
     }
 
     if (error) return <ErrorState error={error} />;
-    if (!volunteers) return <LoadingState />;
+    if (!volunteers) {
+        return (
+            <div className="max-w-3xl mx-auto space-y-6">
+                <Skeleton className="h-8 w-56" />
+                <SkeletonList rows={5} lines={1} />
+            </div>
+        );
+    }
 
     return (
-        <div className="p-6 max-w-3xl mx-auto space-y-6">
-            <div className="flex items-center justify-between">
+        <div className="max-w-3xl mx-auto space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                     <h1 className="text-xl font-bold text-gray-900">Volunteers</h1>
                     <p className="text-sm text-gray-500 mt-0.5">

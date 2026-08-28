@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import * as mgmt from '../../api/management.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import SharedMultiSelect from '../../components/MultiSelect.jsx';
-import { LoadingState, ErrorState, EmptyState, Spinner } from '../../components/LoadingState.jsx';
+import { SkeletonList, Skeleton, ErrorState, EmptyState, Spinner } from '../../components/LoadingState.jsx';
 
 const INPUT = 'w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand focus:border-brand';
 const BTN_PRIMARY = 'inline-flex items-center gap-2 bg-brand text-white text-sm font-medium px-4 py-2 rounded-md hover:bg-brand/90 disabled:opacity-50';
@@ -125,7 +125,7 @@ function CreateUserModal({ ctx, onClose, onCreated }) {
                         </select>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                             <label className="block text-xs font-medium text-gray-600 mb-1">পূর্ণ নাম *</label>
                             <input className={INPUT} required value={form.name} onChange={set('name')} />
@@ -207,11 +207,18 @@ export default function ManagementPage() {
     const canManage = user?.is_super_admin || ['candidate', 'admin', 'sub_admin'].includes(user?.role);
     if (!canManage) return <div className="p-8 text-red-600">আপনার user manage করার অনুমতি নেই।</div>;
     if (error) return <ErrorState error={error} onRetry={reload} />;
-    if (!ctx || !users) return <LoadingState />;
+    if (!ctx || !users) {
+        return (
+            <div className="max-w-4xl mx-auto space-y-5">
+                <Skeleton className="h-8 w-56" />
+                <SkeletonList rows={6} lines={1} />
+            </div>
+        );
+    }
 
     return (
-        <div className="p-6 max-w-4xl mx-auto space-y-5">
-            <div className="flex items-center justify-between">
+        <div className="max-w-4xl mx-auto space-y-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                     <h1 className="text-xl font-bold text-gray-900">Team Management</h1>
                     <p className="text-sm text-gray-500 mt-0.5">

@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as peopleApi from '../../api/people.js';
-import * as candidatesApi from '../../api/candidates.js';
 import MultiSelect from '../../components/MultiSelect.jsx';
-import { LoadingState, ErrorState, EmptyState, Spinner } from '../../components/LoadingState.jsx';
+import { SkeletonList, Skeleton, ErrorState, EmptyState, Spinner } from '../../components/LoadingState.jsx';
 import { useAuth } from '../../auth/AuthContext.jsx';
+import { useCandidates } from '../../hooks/queries/index.js';
+import { keys, TIER } from '../../api/queryKeys.js';
 
 const constituencyOpts = (list) => (list || []).map((c) => ({ value: c.candidate_id, label: `${c.name} — ${c.constituency}` }));
 
@@ -47,8 +49,8 @@ function CreateCandidateModal({ constituencies, onClose, onCreated }) {
 
     return (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
-                <div className="px-5 py-4 border-b border-gray-100 flex justify-between items-center">
+            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full max-h-[92vh] overflow-y-auto">
+                <div className="px-5 py-4 border-b border-gray-100 flex justify-between items-center sticky top-0 bg-white">
                     <h3 className="font-semibold text-gray-800">নতুন Candidate তৈরি করুন</h3>
                     <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><i className="fas fa-times" /></button>
                 </div>
@@ -57,7 +59,7 @@ function CreateCandidateModal({ constituencies, onClose, onCreated }) {
                     <Field label="পূর্ণ নাম *">
                         <input className={INPUT} required value={form.name} onChange={set('name')} />
                     </Field>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <Field label="Username *">
                             <input className={INPUT} required value={form.username} onChange={set('username')} />
                         </Field>
@@ -117,9 +119,9 @@ function AssignConstituencyModal({ candidate, constituencies, onClose, onSaved }
     return (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full">
-                <div className="px-5 py-4 border-b border-gray-100 flex justify-between items-center">
-                    <h3 className="font-semibold text-gray-800">{candidate.name} — Constituency Assign</h3>
-                    <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><i className="fas fa-times" /></button>
+                <div className="px-5 py-4 border-b border-gray-100 flex justify-between items-center gap-3">
+                    <h3 className="font-semibold text-gray-800 truncate min-w-0">{candidate.name} — Constituency Assign</h3>
+                    <button onClick={onClose} className="text-gray-400 hover:text-gray-600 flex-shrink-0"><i className="fas fa-times" /></button>
                 </div>
                 <form className="p-5 space-y-3" onSubmit={submit}>
                     {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded p-2">{error}</div>}
@@ -145,30 +147,34 @@ function AssignConstituencyModal({ candidate, constituencies, onClose, onSaved }
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function PoliticalCandidatesPage() {
-    const { user } = useAuth();
-    const [candidates, setCandidates]       = useState(null);
-    const [constituencies, setConstituencies] = useState([]);
-    const [error, setError]                 = useState(null);
+    const { user, candidate } = useAuth();
     const [showCreate, setShowCreate]       = useState(false);
     const [assigning, setAssigning]         = useState(null);
 
-    if (!user?.is_super_admin) {
+    const isSuper = !!user?.is_super_admin;
+    const cid = candidate?.candidate_id ?? null;
+    const queryClient = useQueryClient();
+    // Both lists run in parallel; cached under the current constituency.
+    const pcQuery = useQuery({
+        queryKey: keys.peopleCandidates(cid),
+        queryFn: () => peopleApi.listCandidates(),
+        enabled: isSuper,
+        ...TIER.REFERENCE,
+    });
+    const constQuery = useCandidates({ enabled: isSuper });
+
+    if (!isSuper) {
         return <div className="p-8 text-red-600">Super-admin only.</div>;
     }
 
-    function reload() {
-        Promise.all([
-            peopleApi.listCandidates(),
-            candidatesApi.list(),
-        ])
-            .then(([cRes, constRes]) => {
-                setCandidates(cRes.candidates || []);
-                setConstituencies(constRes.candidates || constRes || []);
-            })
-            .catch(setError);
-    }
+    const candidates     = pcQuery.data ? (pcQuery.data.candidates || []) : null;
+    const constituencies = constQuery.data || [];
+    const error          = pcQuery.error || constQuery.error;
 
-    useEffect(() => { reload(); }, []);
+    function reload() {
+        queryClient.invalidateQueries({ queryKey: keys.peopleCandidates(cid) });
+        queryClient.invalidateQueries({ queryKey: keys.candidates() });
+    }
 
     async function handleDelete(c) {
         if (!confirm(`"${c.name}" (@${c.username}) candidate-কে ডিলিট করবেন? এটি ফেরানো যাবে না।`)) return;
@@ -181,19 +187,31 @@ export default function PoliticalCandidatesPage() {
     }
 
     if (error) return <ErrorState error={error} />;
-    if (!candidates) return <LoadingState />;
+    if (!candidates) {
+        return (
+            <div className="max-w-4xl mx-auto space-y-6">
+                <Skeleton className="h-8 w-64" />
+                <SkeletonList rows={5} lines={1} />
+            </div>
+        );
+    }
 
     return (
-        <div className="p-6 max-w-4xl mx-auto space-y-6">
+        <div className="max-w-4xl mx-auto space-y-6">
             {/* Header */}
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                    <h1 className="text-xl font-bold text-gray-900">Political Candidates</h1>
+                    <h1 className="text-xl font-bold text-gray-900">
+                        Political Candidates
+                        {candidates.length > 0 && (
+                            <span className="ml-2 text-sm font-normal text-gray-400">({candidates.length})</span>
+                        )}
+                    </h1>
                     <p className="text-sm text-gray-500 mt-0.5">
                         Candidates যারা constituency তে নির্বাচনে অংশ নিচ্ছেন
                     </p>
                 </div>
-                <button className={BTN_PRIMARY} onClick={() => setShowCreate(true)}>
+                <button className={`${BTN_PRIMARY} w-full sm:w-auto justify-center`} onClick={() => setShowCreate(true)}>
                     <i className="fas fa-user-plus" /> নতুন Candidate
                 </button>
             </div>
@@ -238,45 +256,59 @@ function CandidateRow({ candidate, onAssign, onDelete }) {
     const assigned = candidate.constituency_id;
 
     return (
-        <div className="bg-white border border-gray-200 rounded-lg px-4 py-3 flex items-center justify-between gap-4">
-            <div className="min-w-0">
-                <div className="font-medium text-gray-900">{candidate.name}</div>
-                <div className="text-xs text-gray-500 mt-0.5">
-                    @{candidate.username}
-                    {candidate.email && <> · {candidate.email}</>}
-                    {candidate.phone && <> · {candidate.phone}</>}
+        <div className="bg-white border border-gray-200 rounded-lg p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+            {/* Identity + meta — full width on mobile so nothing wraps mid-word */}
+            <div className="flex items-start gap-3 flex-1 min-w-0">
+                <div className="h-10 w-10 rounded-full bg-brand/10 text-brand font-bold flex items-center justify-center flex-shrink-0 uppercase">
+                    {(candidate.name || '?').trim().charAt(0)}
                 </div>
-                <div className="mt-1.5">
-                    {assigned ? (
-                        <span className="inline-flex items-center gap-1 text-xs bg-brand/10 text-brand px-2 py-0.5 rounded-full font-medium">
-                            <i className="fas fa-map-marker-alt text-[10px]" />
-                            {candidate.constituency_name || assigned}
-                            {candidate.constituency_area && <span className="opacity-70">· {candidate.constituency_area}</span>}
+                <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 min-w-0">
+                        <span className="font-medium text-gray-900 truncate">{candidate.name}</span>
+                        <span className={`flex-shrink-0 text-[11px] px-2 py-0.5 rounded-full font-medium ${
+                            candidate.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                        }`}>
+                            {candidate.is_active ? 'Active' : 'Inactive'}
                         </span>
-                    ) : (
-                        <span className="inline-flex items-center gap-1 text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full">
-                            <i className="fas fa-triangle-exclamation text-[10px]" />
-                            কোনো constituency assign করা হয়নি
-                        </span>
-                    )}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-0.5 truncate">
+                        @{candidate.username}
+                        {candidate.email && <> · {candidate.email}</>}
+                        {candidate.phone && <> · {candidate.phone}</>}
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        {assigned ? (
+                            <span className="inline-flex items-center gap-1 text-xs bg-brand/10 text-brand px-2 py-0.5 rounded-full font-medium max-w-full">
+                                <i className="fas fa-map-marker-alt text-[10px] flex-shrink-0" />
+                                <span className="truncate">
+                                    {candidate.constituency_name || assigned}
+                                    {candidate.constituency_area ? ` · ${candidate.constituency_area}` : ''}
+                                </span>
+                            </span>
+                        ) : (
+                            <span className="inline-flex items-center gap-1 text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full">
+                                <i className="fas fa-triangle-exclamation text-[10px]" />
+                                কোনো constituency assign করা হয়নি
+                            </span>
+                        )}
+                    </div>
                 </div>
             </div>
+
+            {/* Actions — their own row on mobile, right column on desktop.
+                Assign is emphasized (primary) until a constituency is set. */}
             <div className="flex items-center gap-2 flex-shrink-0">
-                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                    candidate.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
-                }`}>
-                    {candidate.is_active ? 'Active' : 'Inactive'}
-                </span>
                 <button
-                    className={`${BTN_SECONDARY} text-xs`}
+                    className={`${assigned ? BTN_SECONDARY : BTN_PRIMARY} text-xs flex-1 sm:flex-none justify-center whitespace-nowrap`}
                     onClick={onAssign}
                 >
                     <i className="fas fa-map-marker-alt" /> {assigned ? 'Constituency পরিবর্তন' : 'Constituency Assign'}
                 </button>
                 <button
-                    className="text-xs border border-red-200 text-red-600 px-2 py-1.5 rounded-md hover:bg-red-50"
+                    className="text-xs border border-red-200 text-red-600 px-3 py-2 rounded-md hover:bg-red-50 flex-shrink-0"
                     onClick={onDelete}
                     title="Candidate ডিলিট করুন"
+                    aria-label="Delete candidate"
                 >
                     <i className="fas fa-trash" />
                 </button>

@@ -1,21 +1,27 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import * as candidatesApi from '../../api/candidates.js';
 import PageHeader from '../../components/PageHeader.jsx';
-import { LoadingState, ErrorState, EmptyState, Spinner } from '../../components/LoadingState.jsx';
+import { SkeletonCard, ErrorState, EmptyState, Spinner } from '../../components/LoadingState.jsx';
 import { useAuth } from '../../auth/AuthContext.jsx';
+import { useCandidates } from '../../hooks/queries/index.js';
+import { keys } from '../../api/queryKeys.js';
 
 export default function CandidatesListPage() {
     const { user, switchCandidate, candidate } = useAuth();
-    const [list, setList]       = useState(null);
-    const [error, setError]     = useState(null);
+    const [actionError, setActionError] = useState(null);
     const [busy, setBusy]       = useState(null);
     const [delTarget, setDelTarget] = useState(null); // candidate object pending delete
 
+    const queryClient = useQueryClient();
+    const listQuery = useCandidates();
+    const list  = listQuery.data ?? null;
+    const error = actionError || listQuery.error;
+
     function reload() {
-        candidatesApi.list().then(setList).catch(setError);
+        queryClient.invalidateQueries({ queryKey: keys.candidates() });
     }
-    useEffect(() => { reload(); }, []);
 
     // Switch into a candidate, then go to its data-import page.
     async function manageData(candidateId) {
@@ -24,7 +30,7 @@ export default function CandidatesListPage() {
             await switchCandidate(candidateId);
             window.location.assign('/admin/import');
         } catch (e) {
-            setError(e); setBusy(null);
+            setActionError(e); setBusy(null);
         }
     }
 
@@ -33,7 +39,13 @@ export default function CandidatesListPage() {
     }
 
     if (error) return <ErrorState error={error} />;
-    if (list === null) return <LoadingState />;
+    if (list === null) {
+        return (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} bodyClass="h-28" />)}
+            </div>
+        );
+    }
 
     return (
         <>

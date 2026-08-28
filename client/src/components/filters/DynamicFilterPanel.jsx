@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import CheckboxGroup from './CheckboxGroup.jsx';
 import SingleSelect  from './SingleSelect.jsx';
 import MultiSelect   from './MultiSelect.jsx';
@@ -58,20 +58,20 @@ export default function DynamicFilterPanel({ config, value, onChange }) {
         return m;
     }, [config]);
 
-    // For each filter, load options whenever its parent's value changes.
+    // For each filter, load options whenever its parent's value changes. A filter
+    // whose parent value is unchanged keeps its options — previously any value
+    // change refetched the option lists for EVERY filter (limit 5000 each),
+    // including parentless ones whose options can never change.
+    const loadedFor = useRef({});   // spec.key -> parent-value marker of the last load
+    const lastConfig = useRef(null);
     useEffect(() => {
         let cancelled = false;
+        if (lastConfig.current !== config) {
+            lastConfig.current = config;
+            loadedFor.current = {};
+        }
 
-        async function loadOne(spec) {
-            const parent = spec.depends_on ? specsByKey[spec.depends_on] : null;
-            const parentVal = parent ? parentValueFor(parent, value) : null;
-
-            // If a parent dependency exists but isn't (uniquely) chosen, blank the options.
-            if (parent && parentVal == null) {
-                setOptionsMap((m) => ({ ...m, [spec.key]: [] }));
-                return;
-            }
-
+        async function loadOne(spec, parent, parentVal) {
             setLoadingMap((m) => ({ ...m, [spec.key]: true }));
             try {
                 const opts = await filterOptionsApi.list({
@@ -85,13 +85,27 @@ export default function DynamicFilterPanel({ config, value, onChange }) {
                 if (!cancelled) setOptionsMap((m) => ({ ...m, [spec.key]: opts }));
             } catch (err) {
                 console.error('[filter]', spec.key, 'load failed:', err.message);
+                delete loadedFor.current[spec.key];   // allow a retry on the next change
                 if (!cancelled) setOptionsMap((m) => ({ ...m, [spec.key]: [] }));
             } finally {
                 if (!cancelled) setLoadingMap((m) => ({ ...m, [spec.key]: false }));
             }
         }
 
-        for (const spec of config) loadOne(spec);
+        for (const spec of config) {
+            const parent = spec.depends_on ? specsByKey[spec.depends_on] : null;
+            const parentVal = parent ? parentValueFor(parent, value) : null;
+            const marker = parent ? `p:${parentVal}` : 'root';
+            if (loadedFor.current[spec.key] === marker) continue;
+            loadedFor.current[spec.key] = marker;
+
+            // If a parent dependency exists but isn't (uniquely) chosen, blank the options.
+            if (parent && parentVal == null) {
+                setOptionsMap((m) => ({ ...m, [spec.key]: [] }));
+                continue;
+            }
+            loadOne(spec, parent, parentVal);
+        }
         return () => { cancelled = true; };
         // We re-run when the value object changes (any parent selection might have moved).
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -130,11 +144,11 @@ export default function DynamicFilterPanel({ config, value, onChange }) {
                 if (spec.type === 'multi-select-search') return <MultiSelect key={spec.key} {...common} searchable />;
                 return null; // unknown type
             })}
-            {Object.values(loadingMap).some(Boolean) && (
+            {/* {Object.values(loadingMap).some(Boolean) && (
                 <div className="bg-white border border-brand/30 rounded-lg shadow-sm p-3 text-xs text-gray-500 text-center">
                     <i className="fas fa-spinner fa-spin mr-1" /> Loading options...
                 </div>
-            )}
+            )} */}
         </div>
     );
 }

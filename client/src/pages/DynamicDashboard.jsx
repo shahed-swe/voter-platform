@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import DynamicMap from '../components/DynamicMap.jsx';
 import DynamicFilterPanel from '../components/filters/DynamicFilterPanel.jsx';
 import GeoNavigator from '../components/GeoNavigator.jsx';
 import FilteredVoterListPanel from '../components/canvassing/FilteredVoterListPanel.jsx';
 import CanvassFormModal from '../components/canvassing/CanvassFormModal.jsx';
 import * as votersApi from '../api/voters.js';
+import * as canvassingApi from '../api/canvassing.js';
 import { useAuth } from '../auth/AuthContext.jsx';
 import { wardLabelToScope } from '../utils/geoScope.js';
+import { keys, TIER, invalidateCanvassData } from '../api/queryKeys.js';
 
 const EMPTY_SCOPE = { ward: [], voter_area: [] };
 
@@ -19,13 +22,16 @@ export default function DynamicDashboard() {
 
     const [navScope, setNavScope]           = useState(EMPTY_SCOPE); // multi-select ward + area
     const [filters, setFilters]             = useState({});
-    const [stats, setStats]                 = useState(null);
     const [voterModal, setVoterModal]       = useState(null);
     const [pinnedVoter, setPinnedVoter]     = useState(null);
     const [activeVoter, setActiveVoter]     = useState(null);
     const [flash, setFlash]                 = useState(null);
-    const [listRefreshKey, setListRefreshKey] = useState(0);
+    // Pins + stats refetch via query invalidation after a submit; this key only
+    // tells DynamicMap to refetch the drilled GeoJSON layer.
+    const [mapRefreshKey, setMapRefreshKey] = useState(0);
     const [mobileNav, setMobileNav]         = useState(false); // mobile-only left panel toggle
+    const queryClient = useQueryClient();
+    const cid = candidate?.candidate_id;
 
     // Synchronous reset when candidate switches
     const [lastCandidateId, setLastCandidateId] = useState(candidate?.candidate_id);
@@ -33,7 +39,6 @@ export default function DynamicDashboard() {
         setLastCandidateId(candidate?.candidate_id);
         setNavScope(EMPTY_SCOPE);
         setFilters({});
-        setStats(null);
         setVoterModal(null);
         setPinnedVoter(null);
         setActiveVoter(null);
@@ -49,17 +54,28 @@ export default function DynamicDashboard() {
         setPinnedVoter(null);
     }, [JSON.stringify(navScope)]);
 
+    // All voters in the selected ward/area whose latest canvass has a geolocation —
+    // shown together as pins (same behaviour as /canvassing). Refetched via cache
+    // invalidation after each canvass submit.
+    const hasPinScope = Object.keys(wardScope).length > 0;
+    const pinsQuery = useQuery({
+        queryKey: keys.voterPins(cid, wardScope),
+        queryFn: () => canvassingApi.voterLocations({ scope: wardScope }),
+        enabled: !!cid && hasPinScope,
+        ...TIER.LIVE,
+    });
+    const voterPins = (hasPinScope && pinsQuery.data?.voters) || [];
+
     // Always load stats — including the initial whole-constituency view (no ward /
     // no filter). `stats_only` skips the voter list so the constituency-wide count
     // is fast. (#15: dashboard used to show 0 until an area was picked.)
-    useEffect(() => {
-        let cancelled = false;
-        votersApi
-            .filtered({ filters, scope: wardScope, stats_only: true })
-            .then((d) => !cancelled && setStats(d.stats || null))
-            .catch(() => !cancelled && setStats(null));
-        return () => { cancelled = true; };
-    }, [JSON.stringify(filters), JSON.stringify(wardScope), candidate?.candidate_id, listRefreshKey]);
+    const statsQuery = useQuery({
+        queryKey: keys.voterList(cid, { filters, scope: wardScope, stats_only: true }),
+        queryFn: () => votersApi.filtered({ filters, scope: wardScope, stats_only: true }),
+        enabled: !!cid,
+        ...TIER.LIVE,
+    });
+    const stats = statsQuery.data?.stats || null;
 
     function handleLeafClick({ wardLabel }) {
         const scope = wardLabelToScope(wardLabel);
@@ -92,6 +108,8 @@ export default function DynamicDashboard() {
                 onLeafClick={handleLeafClick}
                 pinnedVoter={pinnedVoter}
                 onPinnedVoterClick={(v) => setActiveVoter(v)}
+                voterPins={voterPins}
+                refreshKey={mapRefreshKey}
                 allowedWards={allowedWards}
                 focusWards={navScope.ward}
                 focusAreaName={navScope.voter_area?.length === 1 ? navScope.voter_area[0] : null}
@@ -144,7 +162,8 @@ export default function DynamicDashboard() {
 
             {/* Pinned voter indicator */}
             {pinnedVoter && !activeVoter && (
-                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[600] bg-indigo-600 text-white rounded-full px-4 py-2 text-sm shadow-lg flex items-center gap-2">
+                // bottom-20 on mobile: clears the এলাকা/ফিল্টার toggle at bottom-3
+                <div className="absolute bottom-20 lg:bottom-4 left-1/2 -translate-x-1/2 z-[600] max-w-[94vw] bg-indigo-600 text-white rounded-full px-4 py-2 text-sm shadow-lg flex items-center gap-2 whitespace-nowrap">
                     <i className="fas fa-map-pin" />
                     <span className="font-medium truncate max-w-[180px]">{pinnedVoter.name}</span>
                     <span className="text-indigo-200 text-xs">— click pin to open</span>
@@ -164,7 +183,7 @@ export default function DynamicDashboard() {
                         className="absolute inset-0 bg-black/40"
                         onClick={() => setVoterModal(null)}
                     />
-                    <div className="relative z-10 w-[480px] h-[75vh] flex flex-col bg-white rounded-xl shadow-2xl overflow-hidden">
+                    <div className="relative z-10 w-[min(94vw,480px)] h-[75vh] flex flex-col bg-white rounded-xl shadow-2xl overflow-hidden">
                         <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between bg-brand/5">
                             <div>
                                 <div className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Voters</div>
@@ -184,7 +203,6 @@ export default function DynamicDashboard() {
                                 filters={{}}
                                 scope={voterModal.scope}
                                 scopeLabel={voterModal.label}
-                                refreshKey={listRefreshKey}
                                 onPickVoter={(v) => {
                                     setVoterModal(null);
                                     setPinnedVoter(v);
@@ -205,7 +223,10 @@ export default function DynamicDashboard() {
                         setFlash(`Saved canvass for ${activeVoter.name}`);
                         setActiveVoter(null);
                         setPinnedVoter(null);
-                        setListRefreshKey((k) => k + 1);   // refresh list + stats (#3)
+                        // Refresh pins, list, stats + analytics via invalidation (#3);
+                        // the map key refetches the drilled GeoJSON layer.
+                        invalidateCanvassData(queryClient, cid);
+                        setMapRefreshKey((k) => k + 1);
                         setTimeout(() => setFlash(null), 4000);
                     }}
                 />

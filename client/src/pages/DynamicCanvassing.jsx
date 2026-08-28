@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import DynamicMap from '../components/DynamicMap.jsx';
 import DynamicFilterPanel from '../components/filters/DynamicFilterPanel.jsx';
 import GeoNavigator from '../components/GeoNavigator.jsx';
@@ -7,6 +8,7 @@ import CanvassFormModal from '../components/canvassing/CanvassFormModal.jsx';
 import * as canvassingApi from '../api/canvassing.js';
 import { useAuth } from '../auth/AuthContext.jsx';
 import { wardLabelToScope } from '../utils/geoScope.js';
+import { keys, TIER, invalidateCanvassData } from '../api/queryKeys.js';
 
 const EMPTY_SCOPE = { ward: [], voter_area: [] };
 
@@ -24,8 +26,14 @@ export default function DynamicCanvassing() {
     const [flash, setFlash]                 = useState(null);
     const [buildingScope, setBuildingScope] = useState(null);
     const [buildingCtx, setBuildingCtx]     = useState(null); // clicked building (id + centroid) for canvass tagging
-    const [listRefreshKey, setListRefreshKey] = useState(0);
+    const [buildingOnly, setBuildingOnly]   = useState(false); // list shows only voters canvassed at buildingCtx
+    // Pins + voter list refetch via query invalidation after a submit; this key
+    // only tells DynamicMap to refetch the drilled GeoJSON layer (building
+    // names / canvassed colors are baked into it server-side).
+    const [mapRefreshKey, setMapRefreshKey] = useState(0);
     const [mobilePanel, setMobilePanel]     = useState(null); // null | 'nav' | 'list' — mobile-only panel toggle
+    const queryClient = useQueryClient();
+    const cid = candidate?.candidate_id;
 
     // Synchronous reset when candidate switches
     const [lastCandidateId, setLastCandidateId] = useState(candidate?.candidate_id);
@@ -48,6 +56,7 @@ export default function DynamicCanvassing() {
     useEffect(() => {
         setBuildingScope(null);
         setBuildingCtx(null);
+        setBuildingOnly(false);
     }, [JSON.stringify(navScope)]);
 
     // Clear pin whenever navigation changes (ward, voter area, or building)
@@ -56,31 +65,32 @@ export default function DynamicCanvassing() {
     }, [JSON.stringify(navScope), buildingScope]);
 
     // All voters in the selected ward/area whose latest canvass has a geolocation —
-    // shown together as pins on the map. Refreshes after each canvass submit so a
-    // newly captured location appears immediately.
-    const [voterPins, setVoterPins] = useState([]);
-    useEffect(() => {
-        const scope = {
-            ...(navScope.ward?.length ? { ward: navScope.ward } : {}),
-            ...(navScope.voter_area?.length ? { voter_area: navScope.voter_area } : {}),
-        };
-        if (!Object.keys(scope).length) { setVoterPins([]); return; }
-        let cancelled = false;
-        canvassingApi
-            .voterLocations({ scope })
-            .then((d) => !cancelled && setVoterPins(d.voters || []))
-            .catch(() => !cancelled && setVoterPins([]));
-        return () => { cancelled = true; };
-    }, [JSON.stringify(navScope), candidate?.candidate_id, listRefreshKey]);
+    // shown together as pins on the map. Refetched via invalidation after each
+    // canvass submit so a newly captured location appears immediately.
+    const pinScope = {
+        ...(navScope.ward?.length ? { ward: navScope.ward } : {}),
+        ...(navScope.voter_area?.length ? { voter_area: navScope.voter_area } : {}),
+    };
+    const hasPinScope = Object.keys(pinScope).length > 0;
+    const pinsQuery = useQuery({
+        queryKey: keys.voterPins(cid, pinScope),
+        queryFn: () => canvassingApi.voterLocations({ scope: pinScope }),
+        enabled: !!cid && hasPinScope,
+        ...TIER.LIVE,
+    });
+    const voterPins = (hasPinScope && pinsQuery.data?.voters) || [];
 
     function handleLeafClick({ wardLabel, building }) {
         // Ward-labelled drills (clicked through the map) narrow the list to that
         // ward. Navigator-driven drills carry a generic "Ward" label that can't be
         // parsed — the GeoNavigator scope already narrows the list there, so the
         // click still counts: it selects the building (highlight + canvass tagging).
+        // NO refreshKey bump here: a building click changes no list data by itself,
+        // and the fetches already re-run on their own deps (scope change → list;
+        // buildingFilter change → building-only list). Bumping it refetched the
+        // list + stats + pins on every single building click for nothing.
         const s = wardLabelToScope(wardLabel);
         if (s) setBuildingScope(s);
-        setListRefreshKey((k) => k + 1);
         setBuildingCtx(building || null);
     }
 
@@ -110,6 +120,7 @@ export default function DynamicCanvassing() {
                     onPinnedVoterClick={(v) => setActiveVoter(v)}
                     voterPins={voterPins}
                     selectedFeatureId={buildingCtx?.building_id ?? null}
+                    refreshKey={mapRefreshKey}
                     allowedWards={allowedWards}
                     focusWards={navScope.ward}
                     focusAreaName={navScope.voter_area?.length === 1 ? navScope.voter_area[0] : null}
@@ -142,8 +153,12 @@ export default function DynamicCanvassing() {
                 <FilteredVoterListPanel
                     filters={filters}
                     scope={geoScope}
-                    scopeLabel={scopeLabel}
-                    refreshKey={listRefreshKey}
+                    scopeLabel={
+                        buildingOnly && buildingCtx
+                            ? (buildingCtx.building_name || 'নির্বাচিত ভবন')
+                            : scopeLabel
+                    }
+                    buildingFilter={buildingOnly ? (buildingCtx?.building_id ?? null) : null}
                     onPickVoter={(v) => { setPinnedVoter(v); setActiveVoter(v); }}
                 />
             </aside>
@@ -176,14 +191,27 @@ export default function DynamicCanvassing() {
 
             {/* Selected building indicator — canvasses now tag to this building */}
             {buildingCtx && (
-                <div className="absolute top-16 left-1/2 -translate-x-1/2 z-[590] bg-amber-50 border border-amber-300 text-amber-800 rounded-full px-4 py-1.5 text-sm shadow-md flex items-center gap-2">
-                    <i className="fas fa-building" />
-                    <span className="bn font-medium truncate max-w-[220px]">
+                <div className="absolute top-16 left-1/2 -translate-x-1/2 z-[590] max-w-[94vw] bg-amber-50 border border-amber-300 text-amber-800 rounded-full px-3 sm:px-4 py-1.5 text-xs sm:text-sm shadow-md flex items-center gap-1.5 sm:gap-2 whitespace-nowrap">
+                    <i className="fas fa-building shrink-0" />
+                    <span className="bn font-medium truncate max-w-[28vw] sm:max-w-[220px]">
                         {buildingCtx.building_name || `ভবন #${buildingCtx.building_id}`}
                     </span>
+                    {buildingCtx.building_id != null && (
+                        <button
+                            className={`bn shrink-0 text-xs font-medium px-2 py-0.5 rounded-full border transition-colors whitespace-nowrap ${
+                                buildingOnly
+                                    ? 'bg-amber-600 text-white border-amber-600'
+                                    : 'bg-white text-amber-700 border-amber-400 hover:bg-amber-100'
+                            }`}
+                            onClick={() => setBuildingOnly((v) => !v)}
+                            title="Show only this building's canvassed voters"
+                        >
+                            এই ভবনের ভোটার
+                        </button>
+                    )}
                     <button
-                        className="text-amber-500 hover:text-amber-800"
-                        onClick={() => setBuildingCtx(null)}
+                        className="text-amber-500 hover:text-amber-800 shrink-0 px-0.5"
+                        onClick={() => { setBuildingCtx(null); setBuildingOnly(false); }}
                         title="Clear selected building"
                     >
                         <i className="fas fa-times" />
@@ -193,7 +221,8 @@ export default function DynamicCanvassing() {
 
             {/* Pinned voter indicator */}
             {pinnedVoter && !activeVoter && (
-                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[600] bg-indigo-600 text-white rounded-full px-4 py-2 text-sm shadow-lg flex items-center gap-2">
+                // bottom-20 on mobile: clears the এলাকা/ভোটার toggle bar at bottom-3
+                <div className="absolute bottom-20 lg:bottom-4 left-1/2 -translate-x-1/2 z-[600] max-w-[94vw] bg-indigo-600 text-white rounded-full px-4 py-2 text-sm shadow-lg flex items-center gap-2 whitespace-nowrap">
                     <i className="fas fa-map-pin" />
                     <span className="font-medium truncate max-w-[180px]">{pinnedVoter.name}</span>
                     <span className="text-indigo-200 text-xs">— click pin to open</span>
@@ -211,13 +240,20 @@ export default function DynamicCanvassing() {
                     voter={activeVoter}
                     building={buildingCtx}
                     onClose={() => setActiveVoter(null)}
-                    onSubmitted={() => {
+                    onSubmitted={(saved) => {
                         setFlash(`Saved canvass for ${activeVoter.name}`);
                         setActiveVoter(null);
                         setPinnedVoter(null);
-                        // Force the voter list to refetch so the row status + counts
-                        // update immediately (no manual refresh). (#3)
-                        setListRefreshKey((k) => k + 1);
+                        // A typed building name is written to the geo layer on submit —
+                        // reflect it on the selection chip right away too.
+                        if (saved?.building_name && buildingCtx && !buildingCtx.building_name) {
+                            setBuildingCtx({ ...buildingCtx, building_name: saved.building_name });
+                        }
+                        // Refetch everything a submit changes — pins, voter list +
+                        // stats, analytics — via cache invalidation, and tell the
+                        // map to refetch the drilled layer (building names/colors).
+                        invalidateCanvassData(queryClient, cid);
+                        setMapRefreshKey((k) => k + 1);
                         setTimeout(() => setFlash(null), 4000);
                     }}
                 />

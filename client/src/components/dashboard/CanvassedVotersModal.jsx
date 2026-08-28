@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import * as urbanApi from '../../api/urban.js';
-import { LoadingState, ErrorState, EmptyState } from '../LoadingState.jsx';
+import { SkeletonTable, ErrorState, EmptyState } from '../LoadingState.jsx';
 
 const BN_DIGITS = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
 const BN_MONTHS = [
@@ -83,9 +83,9 @@ export default function CanvassedVotersModal({ building, onClose }) {
                     </button>
                 </div>
 
-                <div className="overflow-y-auto px-6 py-4">
+                <div className="overflow-y-auto overflow-x-auto px-4 sm:px-6 py-4">
                     {loading ? (
-                        <LoadingState />
+                        <SkeletonTable rows={4} cols={4} />
                     ) : error ? (
                         <ErrorState error={error} />
                     ) : count === 0 ? (
@@ -94,13 +94,13 @@ export default function CanvassedVotersModal({ building, onClose }) {
                             label="এই ভবনে কোনো ভোটার ক্যানভাস হয়নি"
                         />
                     ) : (
-                        <table className="w-full text-sm bn">
+                        <table className="w-full min-w-[480px] text-sm bn">
                             <thead>
                                 <tr className="text-left text-gray-500 border-b border-gray-200">
-                                    <th className="py-2 pr-4">ভোটারের নাম</th>
-                                    <th className="py-2 pr-4">সমর্থন স্তর</th>
-                                    <th className="py-2 pr-4">ক্যানভাসার</th>
-                                    <th className="py-2">তারিখ</th>
+                                    <th className="py-2 pr-4 whitespace-nowrap">ভোটারের নাম</th>
+                                    <th className="py-2 pr-4 whitespace-nowrap">সমর্থন স্তর</th>
+                                    <th className="py-2 pr-4 whitespace-nowrap">ক্যানভাসার</th>
+                                    <th className="py-2 whitespace-nowrap">তারিখ</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100">

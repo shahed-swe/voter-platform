@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth } from '../auth/AuthContext.jsx';
-import * as candidatesApi from '../api/candidates.js';
+import { useCandidates } from '../hooks/queries/index.js';
 
 /**
  * Header switcher for users with access to multiple candidates (and super_admins,
@@ -11,12 +11,17 @@ import * as candidatesApi from '../api/candidates.js';
 export default function CandidateSwitcher() {
     const { user, candidate, switchCandidate } = useAuth();
     const [open, setOpen]     = useState(false);
-    const [opts, setOpts]     = useState(null);
     const [busy, setBusy]     = useState(false);
-    const [error, setError]   = useState(null);
+    const [pickError, setPickError] = useState(null);
     const [dropPos, setDropPos] = useState({ top: 0, right: 0 });
     const btnRef  = useRef(null);
     const menuRef = useRef(null);
+
+    // Lazy-loaded on first open; cached, so reopening (or remounting on the next
+    // route — this lives in the header) doesn't refetch.
+    const candidatesQuery = useCandidates({ enabled: open });
+    const opts  = candidatesQuery.data ?? null;
+    const error = pickError || (candidatesQuery.error ? candidatesQuery.error.message : null);
 
     // Close on outside click
     useEffect(() => {
@@ -30,15 +35,6 @@ export default function CandidateSwitcher() {
         document.addEventListener('mousedown', onDoc);
         return () => document.removeEventListener('mousedown', onDoc);
     }, []);
-
-    // Lazy-load the candidate list the first time the user opens the switcher.
-    useEffect(() => {
-        if (!open || opts !== null) return;
-        candidatesApi
-            .list()
-            .then((cs) => setOpts(cs))
-            .catch((err) => setError(err.message));
-    }, [open, opts]);
 
     const isSuper = !!user?.is_super_admin;
     const grants = user?.candidates || [];
@@ -65,12 +61,12 @@ export default function CandidateSwitcher() {
             return;
         }
         setBusy(true);
-        setError(null);
+        setPickError(null);
         try {
             await switchCandidate(id);
             window.location.assign('/dashboard');
         } catch (err) {
-            setError(err.response?.data?.error || err.message);
+            setPickError(err.response?.data?.error || err.message);
             setBusy(false);
         }
     }
