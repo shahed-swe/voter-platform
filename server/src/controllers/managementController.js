@@ -11,20 +11,68 @@
 const { one, many, query } = require('../db/pool');
 const userModel = require('../models/userModel');
 const candidateModel = require('../models/candidateModel');
+const partyModel = require('../models/partyModel');
 const { hashPassword } = require('../utils/password');
 const { ValidationError, ForbiddenError, NotFoundError } = require('../utils/errors');
 
 // Role rank + who each role may create (down only).
-const RANK = { super_admin: 4, candidate: 3, admin: 2, sub_admin: 1, volunteer: 0 };
+// tenant_admin = the "Political Admin" / party lead (flowApplication.md §3);
+// donor sits outside the main chain at party level (§9).
+const RANK = { super_admin: 5, tenant_admin: 4, candidate: 3, admin: 2, sub_admin: 1, volunteer: 0, donor: 0 };
 const CREATABLE = {
-    super_admin: ['candidate', 'admin', 'sub_admin', 'volunteer'],
-    candidate:   ['admin', 'sub_admin', 'volunteer'],
-    admin:       ['sub_admin', 'volunteer'],
-    sub_admin:   ['volunteer'],
-    volunteer:   [],
+    super_admin:  ['tenant_admin', 'candidate', 'admin', 'sub_admin', 'volunteer', 'donor'],
+    tenant_admin: ['candidate', 'admin', 'sub_admin', 'volunteer', 'donor'],
+    candidate:    ['admin', 'sub_admin', 'volunteer'],
+    admin:        ['sub_admin', 'volunteer'],
+    sub_admin:    ['volunteer'],
+    volunteer:    [],
+    donor:        [],
 };
-// The region granularity a role is scoped to / assigned.
-const REGION_OF = { candidate: 'constituency', admin: 'constituency', sub_admin: 'ward', volunteer: 'voter_area' };
+// The region granularity a role is scoped to / assigned. tenant_admin and
+// donor are PARTY-level: they get a user_parties grant, not a constituency one.
+const REGION_OF = {
+    tenant_admin: 'party', candidate: 'constituency', admin: 'constituency',
+    sub_admin: 'ward', volunteer: 'voter_area', donor: 'party',
+};
+const PARTY_ROLES = new Set(['tenant_admin', 'donor']);
+
+/**
+ * Resolve which party a party-level user belongs to.
+ * A Political Admin MUST come with a party: `party_id`, or `party_name`
+ * (found case-insensitively, created if it doesn't exist yet — the name may be
+ * Bangla, so the slug falls back to a generated id). Donors default to the
+ * platform's party when none is given.
+ */
+async function resolveParty(req, targetRole) {
+    const { party_id: partyId, party_name: partyName } = req.body || {};
+
+    if (partyId) {
+        const p = await partyModel.findById(partyId);
+        if (!p) throw new NotFoundError('Party not found');
+        return p.party_id;
+    }
+
+    if (partyName?.trim()) {
+        const name = partyName.trim();
+        const existing = await partyModel.findByName(name);
+        if (existing) return existing.party_id;
+        // Slug from the name; Bangla names produce no ascii — generate an id.
+        let slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+        if (!slug || await partyModel.findById(slug)) slug = `party-${Date.now().toString(36)}`;
+        const created = await partyModel.create({ partyId: slug, name, createdBy: req.user.user_id });
+        return created.party_id;
+    }
+
+    if (targetRole === 'tenant_admin') {
+        throw new ValidationError('party_name is required — a Political Admin leads a political party');
+    }
+    // Donor without an explicit party → the platform's (single) party.
+    const fallback = await one(
+        `SELECT party_id FROM parties WHERE status = 'active' ORDER BY (party_id = 'default') DESC LIMIT 1`
+    );
+    if (!fallback) throw new ValidationError('No party exists yet');
+    return fallback.party_id;
+}
 
 function callerRole(req) {
     return req.user?.is_super_admin ? 'super_admin' : (req.user?.role || null);
@@ -153,14 +201,25 @@ async function listUsers(req, res) {
         `SELECT DISTINCT ON (u.user_id, uc.candidate_id)
                 u.user_id, u.username, u.name, u.email, u.phone, u.is_active,
                 uc.candidate_id, uc.role, uc.allowed_wards, uc.allowed_voter_areas,
-                uc.political_candidate_id, c.name AS constituency_name
+                uc.political_candidate_id, pc.name AS political_candidate_name,
+                c.name AS constituency_name
            FROM user_candidates uc
            JOIN users u ON u.user_id = uc.user_id
            JOIN candidates c ON c.candidate_id = uc.candidate_id
+           LEFT JOIN users pc ON pc.user_id = uc.political_candidate_id
           WHERE ${where.join(' AND ')}
           ORDER BY u.user_id, uc.candidate_id, uc.role`,
         params
     );
+
+    // Party-level users (Political Admins / Donors) hold user_parties grants,
+    // not constituency grants — append the ones ranked below the caller.
+    const partyRolesBelow = ['tenant_admin', 'donor'].filter((r) => RANK[r] < RANK[role]);
+    if (partyRolesBelow.length && (role === 'super_admin' || role === 'tenant_admin')) {
+        const partyRows = await partyModel.listPartyUsers({ roles: partyRolesBelow });
+        rows.push(...partyRows);
+    }
+
     res.json({ success: true, users: rows });
 }
 
@@ -180,6 +239,32 @@ async function createUser(req, res) {
     if (!CREATABLE[role]?.includes(targetRole)) {
         throw new ForbiddenError(`A ${role} cannot create a ${targetRole}.`);
     }
+
+    // ---- Party-level roles (Political Admin / Donor): no constituency grant —
+    // they get a user_parties row instead (flowApplication.md §3/§9). ----
+    if (PARTY_ROLES.has(targetRole)) {
+        const partyId = await resolveParty(req, targetRole);
+
+        let target;
+        if (existingUserId) {
+            target = await userModel.findById(parseInt(existingUserId, 10));
+            if (!target) throw new NotFoundError('User not found');
+        } else {
+            if (!name || !username || !password) {
+                throw new ValidationError('name, username and password are required');
+            }
+            target = await userModel.create({
+                username, email: email || null, name,
+                passwordHash: await hashPassword(password),
+                role: targetRole, phone: phone || null, referredBy: req.user.user_id,
+            });
+        }
+        await partyModel.grantPartyRole({
+            userId: target.user_id, partyId, role: targetRole, grantedBy: req.user.user_id,
+        });
+        return res.status(201).json({ success: true, user: target });
+    }
+
     // Accept one or many constituencies (multi-select).
     const constituencies = (constituency_ids?.length ? constituency_ids : (constituency_id ? [constituency_id] : []));
     if (!constituencies.length) throw new ValidationError('at least one constituency is required');
@@ -260,6 +345,38 @@ async function updateRegion(req, res) {
     res.json({ success: true });
 }
 
+/**
+ * PUT /api/management/users/:user_id — update a managed user's basic info
+ * (name / email / phone / active flag, optional password reset). Region and
+ * role changes go through PUT /users/:user_id/region.
+ */
+async function updateUser(req, res) {
+    const role = callerRole(req);
+    if (!role || role === 'volunteer' || role === 'donor') {
+        throw new ForbiddenError('You cannot manage users');
+    }
+    const uid = parseInt(req.params.user_id, 10);
+    const target = await userModel.findById(uid);
+    if (!target) throw new NotFoundError('User not found');
+    if (uid !== req.user.user_id && RANK[target.role] >= RANK[role]) {
+        throw new ForbiddenError('Cannot edit a user at or above your level');
+    }
+
+    const { name, email, phone, is_active, password } = req.body || {};
+    // Only pass provided fields — userModel.update would null out the rest.
+    const fields = {};
+    if (name !== undefined) fields.name = name;
+    if (email !== undefined) fields.email = email || null;
+    if (phone !== undefined) fields.phone = phone || null;
+    if (is_active !== undefined) fields.is_active = !!is_active;
+
+    const user = await userModel.update(uid, fields);
+    if (password) {
+        await userModel.updatePassword(uid, await hashPassword(password), true);
+    }
+    res.json({ success: true, user });
+}
+
 /** DELETE /api/management/users/:user_id — remove a managed user (hard delete). */
 async function removeUser(req, res) {
     const role = callerRole(req);
@@ -274,4 +391,4 @@ async function removeUser(req, res) {
     res.json({ success: true });
 }
 
-module.exports = { context, wards, voterAreas, listUsers, createUser, updateRegion, removeUser };
+module.exports = { context, wards, voterAreas, listUsers, createUser, updateUser, updateRegion, removeUser };

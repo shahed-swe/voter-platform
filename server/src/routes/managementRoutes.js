@@ -11,6 +11,7 @@ router.get   ('/wards',                asyncHandler(c.wards));
 router.get   ('/voter-areas',          asyncHandler(c.voterAreas));
 router.get   ('/users',                asyncHandler(c.listUsers));
 router.post  ('/users',                asyncHandler(c.createUser));
+router.put   ('/users/:user_id',       asyncHandler(c.updateUser));
 router.put   ('/users/:user_id/region',asyncHandler(c.updateRegion));
 router.delete('/users/:user_id',       asyncHandler(c.removeUser));
 
