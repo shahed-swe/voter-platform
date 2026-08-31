@@ -1,6 +1,10 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import AppLayout from './components/AppLayout.jsx';
 import ProtectedRoute from './auth/ProtectedRoute.jsx';
+import { useAuth } from './auth/AuthContext.jsx';
+import { roleHome } from './auth/roleHome.js';
+import PartyHomePage from './pages/party/PartyHomePage.jsx';
+import DonorProfilePage from './pages/donor/DonorProfilePage.jsx';
 
 import LoginPage from './pages/LoginPage.jsx';
 import DashboardPage from './pages/DashboardPage.jsx';
@@ -17,6 +21,13 @@ import VolunteerManagementPage from './pages/candidate/VolunteerManagementPage.j
 import ManagementPage from './pages/admin/ManagementPage.jsx';
 import NotFoundPage from './pages/NotFoundPage.jsx';
 
+// Role-aware landing: party-level roles (Political Admin / Donor) get their
+// own home instead of the constituency dashboard they can't use.
+function RoleLanding() {
+    const { user } = useAuth();
+    return <Navigate to={roleHome(user)} replace />;
+}
+
 export default function App() {
     return (
         <Routes>
@@ -29,7 +40,10 @@ export default function App() {
                     </ProtectedRoute>
                 }
             >
-                <Route index element={<Navigate to="/dashboard" replace />} />
+                <Route index element={<RoleLanding />} />
+                {/* Party-level landings */}
+                <Route path="/party" element={<PartyHomePage />} />
+                <Route path="/donor" element={<DonorProfilePage />} />
                 <Route path="/dashboard"        element={<DashboardPage />} />
                 <Route path="/canvassing"       element={<CanvassingPage />} />
                 <Route path="/analytics"        element={<AnalyticsPage />} />
