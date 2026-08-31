@@ -6,15 +6,57 @@ analysis, architecture decisions, and the per-role data-scope matrix — lives i
 [restructured.md](restructured.md); read that first. This file is the "what to
 build, in what order" checklist. Tick steps off as they land.
 
-**Progress so far (2026-08-31):** an early slice landed ahead of the step order —
-the two new roles are creatable from Team Management: `tenant_admin` ("Political
-Admin") and `donor` were added to `/api/management/context` creatable_roles;
-party-level creation goes to `user_parties` (new minimal
-`server/src/models/partyModel.js`); such users can log in (party grants accepted
-by `authController`, `parties` included in the token/user payload) and appear in
-the management list; the create-user modal hides constituency/ward fields for
-them; `022_parties.sql` recreated (skipped on this DB). The rest of Steps 1–4 —
-scoping enforcement, the visibility flip, JWT v2, role landings — is still open.
+**Progress so far (2026-08-31):** the Political Admin layer is LIVE (a
+different chain than this plan originally assumed — the user redefined it:
+Political Admin → Candidate → Campaign Admin → Sub-admin → Volunteer, i.e. the
+Political Admin creates ONLY candidates + donors, and each CANDIDATE appoints
+their own Campaign Admin):
+- Roles `tenant_admin` ("Political Admin") + `donor` creatable from Team
+  Management; party-level grants in `user_parties`; such users log in (party
+  grants in token payload) and land on their own pages (`/party`, `/donor`).
+- `024_user_candidates_party.sql`: `user_candidates.party_id` tags each
+  CANDIDATE grant with the party that registered them — the party-isolation
+  anchor. Political Admin creating a candidate auto-tags his party; required
+  party-name input when super creates a Political Admin (find-or-create party).
+- CREATABLE chain enforced: PA→[candidate,donor], candidate→[admin],
+  admin→[sub_admin], sub_admin→[volunteer].
+- Party-isolated hierarchy view: PA's /management lists ONLY his party's
+  candidates + their campaign trees; candidates see only their own campaign.
+- Party-isolated surveys: `GET /api/canvassing/party-records` + the PA's
+  `/party/surveys` page (records whose campaign candidate belongs to his
+  party); volunteers/others 403.
+- PA home (`/party`) shows the party's candidates grouped by constituency.
+- All verified live as tarek123 (BNP): 3 candidates on Dhaka-10, candidate→
+  admin→sub→volunteer chain, cross-candidate + cross-party isolation, survey
+  visibility.
+
+**Progress update (2026-08-31, later):** per-candidate DATA ENCAPSULATION landed
+(user's rule: a volunteer may serve MULTIPLE candidates, but each candidate sees
+only the surveys collected FOR them):
+- Multi-candidate volunteers: an existing volunteer can be attached to a second
+  candidate's campaign — via the Team Management modal's new "Existing
+  volunteer" toggle (`POST /api/management/users` with `user_id`) or
+  `/api/people/volunteers` (now open to candidate/admin/sub_admin, campaign
+  taken from the caller's grant, wards narrowed to a sub-admin's own). Each
+  grant is its own (user, constituency, campaign) row; the header switcher
+  picks the active campaign and canvasses are stamped with it.
+- Hierarchy guards: `targetInScope` in managementController — edit / region /
+  delete now require the target to be INSIDE the caller's campaign (or the
+  PA's party); rank alone no longer suffices. Cross-campaign edits 403.
+- Detach-not-delete: non-super DELETE removes only the caller's own campaign's
+  (or party's) grants; a shared volunteer keeps the other candidate's grant
+  and login. The account is removed only when no grant remains.
+- Volunteer narrowing: survey list + stats show ONLY the volunteer's own
+  submissions; analytics force `canvasser_id = self`; client nav for
+  volunteers is Dashboard + Canvassing only; /survey-data, /analytics,
+  /election-results routes gated to candidate/admin/sub_admin (+super).
+- Verified live: shared volunteer canvassed once per campaign — cand1 saw only
+  his record, cand2 only his, campaign-1 admin only campaign 1's, PA saw both;
+  cross-hierarchy edit/delete 403; delete by campaign 1 left the campaign-2
+  grant + login intact. Test canvasses removed afterwards.
+
+  Remaining from Steps 1–4: the ward/analytics scoping sweep on voter/geo
+  endpoints, JWT versioning, candidate/sub-admin dashboards.
 
 **Ground rules for the implementer**
 - The database is AHEAD of the code: migrations `022_parties.sql` and

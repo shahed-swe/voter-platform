@@ -136,15 +136,16 @@ async function listByRole(role) {
 }
 
 /** Find users by partial username/name match — for "select existing volunteer" UI. */
-async function searchAll({ search, limit = 20 } = {}) {
-    const params = [`%${search || ''}%`];
+async function searchAll({ search, limit = 20, role = null } = {}) {
+    const params = [`%${search || ''}%`, role];
     return many(
         `SELECT ${PUBLIC_FIELDS} FROM users
           WHERE (name ILIKE $1 OR username ILIKE $1)
+            AND ($2::text IS NULL OR role = $2)
             AND is_active = true
           ORDER BY name
-          LIMIT $2`,
-        [params[0], limit]
+          LIMIT $3`,
+        [...params, limit]
     );
 }
 

@@ -33,10 +33,17 @@ const MANAGER_NAV = [
 // Party-level roles hold no constituency grant — the constituency pages would
 // only 403 at them, so they get a minimal nav until their full views land.
 const PARTY_ADMIN_NAV = [
-    { to: '/party', label: 'Party', icon: 'fa-flag' },
+    { to: '/party',         label: 'Party',   icon: 'fa-flag' },
+    { to: '/party/surveys', label: 'Surveys', icon: 'fa-clipboard-list' },
+    { to: '/management',    label: 'Team',    icon: 'fa-sitemap' },
 ];
 const DONOR_NAV = [
     { to: '/donor', label: 'My Profile', icon: 'fa-hand-holding-heart' },
+];
+// Volunteers only canvass — survey review/analytics belong to the levels above.
+const VOLUNTEER_NAV = [
+    { to: '/dashboard',  label: 'Dashboard',  icon: 'fa-map' },
+    { to: '/canvassing', label: 'Canvassing', icon: 'fa-clipboard-check' },
 ];
 
 function AdminDropdown() {
@@ -148,8 +155,14 @@ export default function AppHeader() {
     // who reach it via the Admin dropdown).
     const showManager = !user?.is_super_admin && ['candidate', 'admin', 'sub_admin'].includes(user?.role);
 
-    // Party-level roles see only their own pages; everyone else the full nav.
-    const mainNav = partyAdmin ? PARTY_ADMIN_NAV : donor ? DONOR_NAV : MAIN_NAV;
+    const volunteer = !user?.is_super_admin && user?.role === 'volunteer';
+
+    // Party-level roles see only their own pages; volunteers only the field
+    // tools; everyone else the full nav.
+    const mainNav = partyAdmin ? PARTY_ADMIN_NAV
+        : donor ? DONOR_NAV
+        : volunteer ? VOLUNTEER_NAV
+        : MAIN_NAV;
     const roleLabel = user?.is_super_admin ? 'Super Admin'
         : partyAdmin ? 'Political Admin'
         : donor ? 'Donor'

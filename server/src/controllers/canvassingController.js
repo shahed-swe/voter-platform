@@ -13,6 +13,12 @@ function pcId(req) {
     return req.user?.political_candidate_id || null;
 }
 
+// Volunteers only canvass — their survey LIST/stats show their own submissions
+// (field features like prefill/status/pins stay campaign-wide so canvassing works).
+function ownId(req) {
+    return req.user?.role === 'volunteer' ? req.user.user_id : null;
+}
+
 async function submit(req, res) {
     const { voter_id, ...rest } = req.body || {};
     if (!voter_id) throw new ValidationError('voter_id is required');
@@ -75,18 +81,48 @@ async function voterLocations(req, res) {
     res.json({ success: true, voters: rows });
 }
 
+/**
+ * GET /api/canvassing/party-records?limit=&offset=&q=
+ * The Political Admin's party-wide survey view: every canvass whose campaign
+ * belongs to a candidate of HIS party, across all constituencies. Nothing from
+ * any other party is reachable here (join on user_candidates.party_id).
+ * Super admins may inspect any party via ?party_id=.
+ */
+async function partyRecords(req, res) {
+    const myParties = (req.user?.parties || [])
+        .filter((p) => p.role === 'tenant_admin')
+        .map((p) => p.id);
+
+    let partyIds;
+    if (req.user?.is_super_admin) {
+        if (!req.query.party_id) throw new ValidationError('party_id required');
+        partyIds = [req.query.party_id];
+    } else {
+        if (!myParties.length) throw new ForbiddenError('Political Admin only');
+        partyIds = myParties;
+    }
+
+    const out = await canvassingModel.partyRecords(partyIds, {
+        limit: Math.min(parseInt(req.query.limit || 50, 10) || 50, 500),
+        offset: parseInt(req.query.offset || 0, 10) || 0,
+        search: req.query.q || null,
+    });
+    res.json({ success: true, ...out });
+}
+
 async function voterRecords(req, res) {
     const rows = await canvassingModel.listVoterRecords(tenant(req), {
         limit: parseInt(req.query.limit || 200, 10),
         offset: parseInt(req.query.offset || 0, 10),
         search: req.query.q || null,
         politicalCandidateId: pcId(req),
+        userId: ownId(req),
     });
     res.json({ success: true, records: rows });
 }
 
 async function stats(req, res) {
-    res.json({ success: true, stats: await canvassingModel.stats(tenant(req), pcId(req)) });
+    res.json({ success: true, stats: await canvassingModel.stats(tenant(req), pcId(req), ownId(req)) });
 }
 
 module.exports = {
@@ -96,5 +132,6 @@ module.exports = {
     allLocations,
     voterLocations,
     voterRecords,
+    partyRecords,
     stats,
 };

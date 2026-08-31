@@ -80,12 +80,17 @@ async function voterLocationsByScope(candidateId, { wards = null, voterAreas = n
     );
 }
 
-async function listVoterRecords(candidateId, { limit = 200, offset = 0, search = null, politicalCandidateId = null } = {}) {
+async function listVoterRecords(candidateId, { limit = 200, offset = 0, search = null, politicalCandidateId = null, userId = null } = {}) {
     const params = [candidateId, politicalCandidateId];
     let searchClause = '';
     if (search) {
         params.push(`%${search}%`);
         searchClause = `AND (v.name ILIKE $${params.length} OR v.sos_vid ILIKE $${params.length})`;
+    }
+    // Volunteers only review their OWN submissions in the survey list.
+    if (userId != null) {
+        params.push(userId);
+        searchClause += ` AND c.user_id = $${params.length}`;
     }
     params.push(limit);
     const limitIdx = params.length;
@@ -106,7 +111,53 @@ async function listVoterRecords(candidateId, { limit = 200, offset = 0, search =
     );
 }
 
-async function stats(candidateId, politicalCandidateId = null) {
+/**
+ * All survey records belonging to a PARTY — i.e. canvasses whose campaign
+ * (political_candidate_id) is a candidate registered by that party — across
+ * every constituency. Powers the Political Admin's party-wide survey view;
+ * strict party isolation comes from the user_candidates.party_id join.
+ */
+async function partyRecords(partyIds, { limit = 50, offset = 0, search = null } = {}) {
+    const params = [partyIds];
+    let searchClause = '';
+    if (search) {
+        params.push(`%${search}%`);
+        searchClause = `AND (v.name ILIKE $${params.length} OR v.sos_vid ILIKE $${params.length} OR u.name ILIKE $${params.length})`;
+    }
+    const base = `
+       FROM canvassing c
+       JOIN voters v      ON v.voter_id = c.voter_id
+       JOIN users u       ON u.user_id = c.user_id
+       JOIN users pcu     ON pcu.user_id = c.political_candidate_id
+       JOIN candidates cd ON cd.candidate_id = c.candidate_id
+      WHERE EXISTS (
+          SELECT 1 FROM user_candidates uc
+           WHERE uc.user_id = c.political_candidate_id
+             AND uc.role = 'candidate'
+             AND uc.party_id = ANY($1)
+      ) ${searchClause}`;
+
+    const totalRow = await one(`SELECT COUNT(*)::int AS total ${base}`, params);
+    params.push(limit);
+    const limitIdx = params.length;
+    params.push(offset);
+    const offsetIdx = params.length;
+    const records = await many(
+        `SELECT c.canvass_id, c.voter_id, c.support_level, c.support_rating,
+                c.follow_up_needed, c.issues_concerns, c.canvass_date,
+                v.name AS voter_name, v.sos_vid, v.ward, v.voter_area_name,
+                u.name AS canvasser_name,
+                pcu.name AS candidate_name, pcu.user_id AS candidate_user_id,
+                cd.name AS constituency_name, cd.candidate_id
+           ${base}
+          ORDER BY c.canvass_date DESC
+          LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+        params
+    );
+    return { records, total: totalRow?.total || 0 };
+}
+
+async function stats(candidateId, politicalCandidateId = null, userId = null) {
     return one(
         `SELECT
             COUNT(*)                                                     AS total_canvasses,
@@ -117,8 +168,9 @@ async function stats(candidateId, politicalCandidateId = null) {
             COUNT(*) FILTER (WHERE follow_up_needed)                     AS follow_up
            FROM canvassing
           WHERE candidate_id = $1
-            AND ($2::bigint IS NULL OR political_candidate_id = $2)`,
-        [candidateId, politicalCandidateId]
+            AND ($2::bigint IS NULL OR political_candidate_id = $2)
+            AND ($3::bigint IS NULL OR user_id = $3)`,
+        [candidateId, politicalCandidateId, userId]
     );
 }
 
@@ -252,6 +304,7 @@ module.exports = {
     allLocations,
     voterLocationsByScope,
     listVoterRecords,
+    partyRecords,
     stats,
     submit,
 };

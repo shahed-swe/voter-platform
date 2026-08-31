@@ -29,7 +29,14 @@ function filtersOf(req) {
     };
 }
 function opts(req, extra = {}) {
-    return { politicalCandidateId: pcId(req), filters: filtersOf(req), ...extra };
+    const filters = filtersOf(req);
+    // Volunteers only canvass — any analytics they reach reflect their own
+    // submissions, never teammates' (whatever canvasser filter they request).
+    if (req.user?.role === 'volunteer') {
+        filters.canvasserId = req.user.user_id;
+        filters.canvasserIds = [];
+    }
+    return { politicalCandidateId: pcId(req), filters, ...extra };
 }
 
 async function overview(req, res) {

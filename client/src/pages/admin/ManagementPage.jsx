@@ -57,12 +57,32 @@ function CreateUserModal({ ctx, onClose, onCreated }) {
     const [loadingA, setLoadingA]   = useState(false);
     const [busy, setBusy]           = useState(false);
     const [error, setError]         = useState(null);
+    // "Existing volunteer" attach mode — the SAME person can canvass for
+    // several candidates; attaching adds a grant under THIS campaign.
+    const [attachExisting, setAttachExisting] = useState(false);
+    const [userSearch, setUserSearch]         = useState('');
+    const [userResults, setUserResults]       = useState([]);
+    const [selectedUser, setSelectedUser]     = useState(null);
     const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
     const isPartyRole = PARTY_ROLES.includes(form.role);
     const needsWard = form.role === 'sub_admin' || form.role === 'volunteer';
     const needsArea = form.role === 'volunteer';
+    const isVolunteer = form.role === 'volunteer';
+    const useExisting = isVolunteer && attachExisting;
     const superPicksCampaign = ctx.role === 'super_admin' && form.role !== 'candidate' && !isPartyRole;
+
+    // Debounced volunteer search for the attach picker.
+    useEffect(() => {
+        if (!useExisting || userSearch.trim().length < 2) { setUserResults([]); return; }
+        const t = setTimeout(() => {
+            import('../../api/people.js').then((people) =>
+                people.searchUsers(userSearch.trim())
+                    .then((r) => setUserResults((r.users || []).filter((u) => u.role === 'volunteer')))
+                    .catch(() => setUserResults([])));
+        }, 300);
+        return () => clearTimeout(t);
+    }, [userSearch, useExisting]);
 
     const constituencyOpts = ctx.constituencies.map((c) => ({ value: c.candidate_id, label: `${c.name} — ${c.constituency}` }));
 
@@ -97,11 +117,15 @@ function CreateUserModal({ ctx, onClose, onCreated }) {
 
     async function submit(e) {
         e.preventDefault();
+        if (useExisting && !selectedUser) { setError('একজন volunteer নির্বাচন করুন'); return; }
         setBusy(true); setError(null);
         try {
             await mgmt.createUser({
                 role: form.role,
-                name: form.name, username: form.username, password: form.password,
+                user_id: useExisting ? selectedUser.user_id : undefined,
+                name: useExisting ? undefined : form.name,
+                username: useExisting ? undefined : form.username,
+                password: useExisting ? undefined : form.password,
                 email: form.email || undefined, phone: form.phone || undefined,
                 constituency_ids: isPartyRole ? undefined : constituencies,
                 party_name: isPartyRole ? (form.party_name.trim() || undefined) : undefined,
@@ -132,42 +156,96 @@ function CreateUserModal({ ctx, onClose, onCreated }) {
                         </select>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div>
-                            <label className="block text-xs font-medium text-gray-600 mb-1">পূর্ণ নাম *</label>
-                            <input className={INPUT} required value={form.name} onChange={set('name')} />
+                    {isVolunteer && (
+                        <div className="flex rounded-md border border-gray-200 overflow-hidden text-sm">
+                            <button type="button"
+                                    className={`flex-1 px-3 py-2 ${!attachExisting ? 'bg-brand text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                                    onClick={() => { setAttachExisting(false); setSelectedUser(null); }}>
+                                <i className="fas fa-user-plus mr-1.5" />নতুন volunteer
+                            </button>
+                            <button type="button"
+                                    className={`flex-1 px-3 py-2 ${attachExisting ? 'bg-brand text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                                    onClick={() => setAttachExisting(true)}>
+                                <i className="fas fa-user-check mr-1.5" />Existing volunteer
+                            </button>
                         </div>
+                    )}
+
+                    {useExisting ? (
                         <div>
-                            <label className="block text-xs font-medium text-gray-600 mb-1">Phone</label>
-                            <input className={INPUT} value={form.phone} onChange={set('phone')} placeholder="+88017..." />
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Volunteer খুঁজুন (নাম / username) *</label>
+                            {selectedUser ? (
+                                <div className="flex items-center justify-between border border-brand/40 bg-brand/5 rounded-md px-3 py-2 text-sm">
+                                    <span><span className="font-medium">{selectedUser.name}</span> <span className="text-gray-500">@{selectedUser.username}</span></span>
+                                    <button type="button" className="text-gray-400 hover:text-red-500" onClick={() => setSelectedUser(null)}>
+                                        <i className="fas fa-times" />
+                                    </button>
+                                </div>
+                            ) : (
+                                <>
+                                    <input className={INPUT} value={userSearch} onChange={(e) => setUserSearch(e.target.value)}
+                                           placeholder="কমপক্ষে ২ অক্ষর লিখুন" />
+                                    {userResults.length > 0 && (
+                                        <div className="mt-1 border border-gray-200 rounded-md divide-y max-h-40 overflow-y-auto">
+                                            {userResults.map((u) => (
+                                                <button key={u.user_id} type="button"
+                                                        className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50"
+                                                        onClick={() => { setSelectedUser(u); setUserResults([]); }}>
+                                                    <span className="font-medium">{u.name}</span>{' '}
+                                                    <span className="text-gray-500">@{u.username}</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </>
+                            )}
+                            <p className="text-[11px] text-gray-400 mt-1">
+                                একই volunteer একাধিক candidate-এর হয়ে কাজ করতে পারেন — এখানে যুক্ত করলে
+                                আপনার campaign-এর অধীনে নতুন assignment তৈরি হবে; অন্য candidate-এর data আলাদাই থাকবে।
+                            </p>
                         </div>
-                        <div>
-                            <label className="block text-xs font-medium text-gray-600 mb-1">Username *</label>
-                            <input className={INPUT} required value={form.username} onChange={set('username')} />
+                    ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                                <label className="block text-xs font-medium text-gray-600 mb-1">পূর্ণ নাম *</label>
+                                <input className={INPUT} required value={form.name} onChange={set('name')} />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-medium text-gray-600 mb-1">Phone</label>
+                                <input className={INPUT} value={form.phone} onChange={set('phone')} placeholder="+88017..." />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-medium text-gray-600 mb-1">Username *</label>
+                                <input className={INPUT} required value={form.username} onChange={set('username')} />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-medium text-gray-600 mb-1">Password *</label>
+                                <input className={INPUT} required type="password" value={form.password} onChange={set('password')} />
+                            </div>
                         </div>
-                        <div>
-                            <label className="block text-xs font-medium text-gray-600 mb-1">Password *</label>
-                            <input className={INPUT} required type="password" value={form.password} onChange={set('password')} />
-                        </div>
-                    </div>
+                    )}
 
                     {isPartyRole ? (
                         <>
-                            <div>
-                                <label className="block text-xs font-medium text-gray-600 mb-1">
-                                    রাজনৈতিক দলের নাম (Political party name){form.role === 'tenant_admin' ? ' *' : ''}
-                                </label>
-                                <input
-                                    className={INPUT}
-                                    required={form.role === 'tenant_admin'}
-                                    value={form.party_name}
-                                    onChange={set('party_name')}
-                                    placeholder="যেমন: Centrist Nation"
-                                />
-                                <p className="text-[11px] text-gray-400 mt-1">
-                                    দল আগে থেকে থাকলে সেটিতেই যুক্ত হবে, না থাকলে নতুন দল তৈরি হবে।
-                                </p>
-                            </div>
+                            {/* A Political Admin's own party is implied server-side —
+                                only the super admin picks/creates the party by name. */}
+                            {ctx.role === 'super_admin' && (
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                                        রাজনৈতিক দলের নাম (Political party name){form.role === 'tenant_admin' ? ' *' : ''}
+                                    </label>
+                                    <input
+                                        className={INPUT}
+                                        required={form.role === 'tenant_admin'}
+                                        value={form.party_name}
+                                        onChange={set('party_name')}
+                                        placeholder="যেমন: Centrist Nation"
+                                    />
+                                    <p className="text-[11px] text-gray-400 mt-1">
+                                        দল আগে থেকে থাকলে সেটিতেই যুক্ত হবে, না থাকলে নতুন দল তৈরি হবে।
+                                    </p>
+                                </div>
+                            )}
                             <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded p-2">
                                 {form.role === 'tenant_admin'
                                     ? 'Political Admin দল-পর্যায়ের role — কোনো constituency/ward assign লাগে না; পুরো দলের দায়িত্বে থাকবেন।'
@@ -392,7 +470,9 @@ export default function ManagementPage() {
         catch (err) { alert(err.response?.data?.error || err.message); }
     }
 
-    const canManage = user?.is_super_admin || ['candidate', 'admin', 'sub_admin'].includes(user?.role);
+    const canManage = user?.is_super_admin
+        || ['tenant_admin', 'candidate', 'admin', 'sub_admin'].includes(user?.role)
+        || (user?.parties || []).some((p) => p.role === 'tenant_admin');
     if (!canManage) return <div className="p-8 text-red-600">আপনার user manage করার অনুমতি নেই।</div>;
     if (error) return <ErrorState error={error} onRetry={reload} />;
     if (!ctx || !users) {

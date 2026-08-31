@@ -23,18 +23,31 @@ function requireSuperAdmin(req) {
     if (!req.user?.is_super_admin) throw new ForbiddenError('Super-admin only');
 }
 
-function requireCandidateOrSuper(req) {
+// Roles that manage volunteers: the whole campaign chain above them.
+function requireVolunteerManager(req) {
     if (req.user?.is_super_admin) return;
-    if (req.user?.role === 'candidate') return;
-    throw new ForbiddenError('Candidate or super-admin only');
+    if (['candidate', 'admin', 'sub_admin'].includes(req.user?.role)) return;
+    throw new ForbiddenError('Only campaign staff may manage volunteers');
 }
 
-function actingAs(req) {
-    // Returns the political_candidate_id the requester represents.
-    // For a 'candidate' user this is their own user_id.
-    // Super-admins must pass it via query/body.
-    if (req.user?.role === 'candidate') return req.user.user_id;
-    return null; // super-admin: caller provides context
+/**
+ * The campaign (political_candidate_id) the caller acts for. A candidate IS
+ * their own campaign; campaign/sub admins carry it on their grant. Null only
+ * for super-admins (they pass it explicitly).
+ */
+function campaignOf(req) {
+    if (req.user?.is_super_admin) return null;
+    return req.user?.political_candidate_id
+        || (req.user?.role === 'candidate' ? req.user.user_id : null);
+}
+
+// Sub-admins may only hand out wards within their own assignment.
+function checkWardScope(req, wards) {
+    const mine = req.user?.allowed_wards;
+    if (!mine?.length) return;
+    for (const w of (wards || [])) {
+        if (!mine.includes(w)) throw new ForbiddenError(`Ward ${w} is outside your scope`);
+    }
 }
 
 // ──────────────────────────── political candidates ────────────────────────────
@@ -128,7 +141,7 @@ async function deleteCandidate(req, res) {
  *   OR: { user_id (existing), constituency_id, wards: ['৫২'] }
  */
 async function createOrAssignVolunteer(req, res) {
-    requireCandidateOrSuper(req);
+    requireVolunteerManager(req);
 
     const { user_id: existingUserId, name, username, password, email, phone,
             constituency_id, wards } = req.body || {};
@@ -141,15 +154,21 @@ async function createOrAssignVolunteer(req, res) {
         const grant = (req.user.candidates || []).find((c) => c.id === constituency_id);
         if (!grant) throw new ForbiddenError('You are not assigned to this constituency');
     }
+    checkWardScope(req, wards);
 
     const politicalCandidateId = req.user.is_super_admin
         ? (req.body.political_candidate_id || null)
-        : req.user.user_id;
+        : campaignOf(req);
 
     let volunteer;
     if (existingUserId) {
+        // Attaching an EXISTING volunteer — the multi-candidate case: the same
+        // person canvasses for several candidates, each grant its own campaign.
         volunteer = await userModel.findById(parseInt(existingUserId, 10));
         if (!volunteer) throw new NotFoundError('User not found');
+        if (volunteer.role !== 'volunteer') {
+            throw new ValidationError(`@${volunteer.username} is a ${volunteer.role}, not a volunteer`);
+        }
     } else {
         if (!name || !username || !password) {
             throw new ValidationError('name, username and password required for new volunteer');
@@ -182,13 +201,13 @@ async function createOrAssignVolunteer(req, res) {
  * Lists volunteers for a constituency scoped to the requester's political_candidate_id.
  */
 async function listVolunteers(req, res) {
-    requireCandidateOrSuper(req);
+    requireVolunteerManager(req);
     const { constituency_id } = req.query;
     if (!constituency_id) throw new ValidationError('constituency_id required');
 
     const politicalCandidateId = req.user.is_super_admin
         ? (req.query.political_candidate_id || null)
-        : req.user.user_id;
+        : campaignOf(req);
 
     const users = await candidateModel.listUsersForConstituency(constituency_id, {
         politicalCandidateId,
@@ -201,15 +220,16 @@ async function listVolunteers(req, res) {
  * Update ward assignment for a volunteer.
  */
 async function updateVolunteerWards(req, res) {
-    requireCandidateOrSuper(req);
+    requireVolunteerManager(req);
     const { user_id } = req.params;
     const { constituency_id, wards } = req.body || {};
     if (!constituency_id) throw new ValidationError('constituency_id required');
     if (!wards?.length)   throw new ValidationError('wards required');
+    checkWardScope(req, wards);
 
     const politicalCandidateId = req.user.is_super_admin
         ? (req.body.political_candidate_id || null)
-        : req.user.user_id;
+        : campaignOf(req);
 
     await candidateModel.grantUserAccess({
         userId: parseInt(user_id, 10),
@@ -225,12 +245,16 @@ async function updateVolunteerWards(req, res) {
 
 /** DELETE /api/people/volunteers/:user_id?constituency_id=dhaka10 */
 async function removeVolunteer(req, res) {
-    requireCandidateOrSuper(req);
+    requireVolunteerManager(req);
     const { constituency_id } = req.query;
     if (!constituency_id) throw new ValidationError('constituency_id required');
 
+    // Non-super callers only revoke THEIR campaign's grant — a volunteer shared
+    // with another candidate keeps that candidate's assignment untouched.
     const uid = parseInt(req.params.user_id, 10);
-    await candidateModel.revokeUserAccess(uid, constituency_id);
+    await candidateModel.revokeUserAccess(uid, constituency_id, {
+        politicalCandidateId: req.user.is_super_admin ? null : campaignOf(req),
+    });
 
     // If the volunteer no longer belongs to any constituency, delete the account
     // entirely so it doesn't linger as an orphaned login.

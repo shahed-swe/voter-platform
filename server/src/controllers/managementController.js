@@ -19,11 +19,14 @@ const { ValidationError, ForbiddenError, NotFoundError } = require('../utils/err
 // tenant_admin = the "Political Admin" / party lead (flowApplication.md §3);
 // donor sits outside the main chain at party level (§9).
 const RANK = { super_admin: 5, tenant_admin: 4, candidate: 3, admin: 2, sub_admin: 1, volunteer: 0, donor: 0 };
+// The chain (each role assigns the one directly below it):
+//   Political Admin → Candidate → Campaign Admin → Sub-admin → Volunteer
+// The Political Admin also assigns party Donors. Super admin can bootstrap any.
 const CREATABLE = {
     super_admin:  ['tenant_admin', 'candidate', 'admin', 'sub_admin', 'volunteer', 'donor'],
-    tenant_admin: ['candidate', 'admin', 'sub_admin', 'volunteer', 'donor'],
-    candidate:    ['admin', 'sub_admin', 'volunteer'],
-    admin:        ['sub_admin', 'volunteer'],
+    tenant_admin: ['candidate', 'donor'],
+    candidate:    ['admin'],
+    admin:        ['sub_admin'],
     sub_admin:    ['volunteer'],
     volunteer:    [],
     donor:        [],
@@ -45,6 +48,13 @@ const PARTY_ROLES = new Set(['tenant_admin', 'donor']);
  */
 async function resolveParty(req, targetRole) {
     const { party_id: partyId, party_name: partyName } = req.body || {};
+
+    // A Political Admin always assigns within his OWN party — whatever the
+    // request says (party isolation).
+    if (!req.user?.is_super_admin) {
+        const mine = callerPartyIds(req);
+        if (mine.length) return mine[0];
+    }
 
     if (partyId) {
         const p = await partyModel.findById(partyId);
@@ -83,10 +93,63 @@ function campaignId(req) {
     return req.user?.is_super_admin ? null : (req.user?.political_candidate_id || req.user?.user_id || null);
 }
 
+/** Party ids where the caller is the Political Admin (tenant_admin). */
+function callerPartyIds(req) {
+    return (req.user?.parties || [])
+        .filter((p) => p.role === 'tenant_admin')
+        .map((p) => p.id);
+}
+
 /** Constituencies the caller may assign within. */
 function callerConstituencies(req) {
     if (req.user?.is_super_admin) return null; // all
+    // A Political Admin registers his party's candidates on ANY seat —
+    // constituencies are shared geography, party isolation lives on the grants.
+    if (callerRole(req) === 'tenant_admin') return null;
     return (req.user?.candidates || []).map((g) => g.id);
+}
+
+/**
+ * True when the target user belongs to the caller's OWN hierarchy. Rank alone
+ * is not enough — Candidate A's team must never touch Candidate B's people
+ * (data/user encapsulation is per campaign, per party).
+ *  - campaign-axis callers (candidate/admin/sub_admin): the target must hold a
+ *    grant on the caller's campaign;
+ *  - Political Admin: the target must belong to one of his party's campaigns,
+ *    be one of his party's candidates, or hold a party grant in his party.
+ */
+async function targetInScope(req, targetUserId) {
+    if (req.user?.is_super_admin) return true;
+    const role = callerRole(req);
+
+    if (role === 'tenant_admin') {
+        const partyIds = callerPartyIds(req);
+        if (!partyIds.length) return false;
+        const row = await one(
+            `SELECT 1 AS ok
+              WHERE EXISTS (
+                    SELECT 1 FROM user_candidates uc
+                     WHERE uc.user_id = $1
+                       AND (uc.party_id = ANY($2)
+                            OR uc.political_candidate_id IN (
+                                SELECT uc2.user_id FROM user_candidates uc2
+                                 WHERE uc2.role = 'candidate' AND uc2.party_id = ANY($2))))
+                 OR EXISTS (
+                    SELECT 1 FROM user_parties up
+                     WHERE up.user_id = $1 AND up.party_id = ANY($2))`,
+            [targetUserId, partyIds]
+        );
+        return !!row;
+    }
+
+    const cid = campaignId(req);
+    if (!cid) return false;
+    const row = await one(
+        `SELECT 1 AS ok FROM user_candidates
+          WHERE user_id = $1 AND political_candidate_id = $2 LIMIT 1`,
+        [targetUserId, cid]
+    );
+    return !!row;
 }
 
 async function distinctWards(candidateId, limitToWards) {
@@ -124,20 +187,16 @@ async function context(req, res) {
         return res.json({ success: true, role, creatable_roles: [], constituencies: [] });
     }
 
-    // Constituencies available to assign.
-    let constituencies;
-    if (req.user.is_super_admin) {
-        constituencies = await candidateModel.listActive();
-    } else {
-        const mine = callerConstituencies(req);
-        const all = await candidateModel.listActive();
-        constituencies = all.filter((c) => mine.includes(c.candidate_id));
-    }
+    // Constituencies available to assign (null scope = all active).
+    const mine = callerConstituencies(req);
+    const all = await candidateModel.listActive();
+    const constituencies = mine ? all.filter((c) => mine.includes(c.candidate_id)) : all;
 
     res.json({
         success: true,
         role,
         campaign_id: campaignId(req),
+        my_parties: callerPartyIds(req),
         creatable_roles: CREATABLE[role],
         region_of: REGION_OF,
         // Sub-admins assign voter areas within their own wards; expose those.
@@ -182,7 +241,20 @@ async function listUsers(req, res) {
     const params = [];
     const where = [`u.is_active = true`];
 
-    if (!req.user.is_super_admin) {
+    if (role === 'tenant_admin') {
+        // PARTY ISOLATION: the Political Admin sees ONLY his own party — the
+        // candidates his party registered plus everyone in those candidates'
+        // campaigns (campaign admin → sub admin → volunteer all carry
+        // political_candidate_id of a party candidate).
+        const myParties = callerPartyIds(req);
+        if (!myParties.length) throw new ForbiddenError('No party assigned to your account');
+        params.push(myParties);
+        const p = params.length;
+        where.push(`(uc.party_id = ANY($${p}) OR uc.political_candidate_id IN (
+            SELECT uc2.user_id FROM user_candidates uc2
+             WHERE uc2.role = 'candidate' AND uc2.party_id = ANY($${p})))`);
+    } else if (!req.user.is_super_admin) {
+        // Campaign chain: locked to the caller's own campaign.
         params.push(campaignId(req));
         where.push(`uc.political_candidate_id = $${params.length}`);
     }
@@ -201,7 +273,7 @@ async function listUsers(req, res) {
         `SELECT DISTINCT ON (u.user_id, uc.candidate_id)
                 u.user_id, u.username, u.name, u.email, u.phone, u.is_active,
                 uc.candidate_id, uc.role, uc.allowed_wards, uc.allowed_voter_areas,
-                uc.political_candidate_id, pc.name AS political_candidate_name,
+                uc.political_candidate_id, uc.party_id, pc.name AS political_candidate_name,
                 c.name AS constituency_name
            FROM user_candidates uc
            JOIN users u ON u.user_id = uc.user_id
@@ -213,10 +285,14 @@ async function listUsers(req, res) {
     );
 
     // Party-level users (Political Admins / Donors) hold user_parties grants,
-    // not constituency grants — append the ones ranked below the caller.
+    // not constituency grants — append the ones ranked below the caller,
+    // limited to the caller's own party for Political Admins.
     const partyRolesBelow = ['tenant_admin', 'donor'].filter((r) => RANK[r] < RANK[role]);
     if (partyRolesBelow.length && (role === 'super_admin' || role === 'tenant_admin')) {
-        const partyRows = await partyModel.listPartyUsers({ roles: partyRolesBelow });
+        const partyRows = await partyModel.listPartyUsers({
+            roles: partyRolesBelow,
+            partyIds: role === 'tenant_admin' ? callerPartyIds(req) : null,
+        });
         rows.push(...partyRows);
     }
 
@@ -288,11 +364,16 @@ async function createUser(req, res) {
         for (const w of (wardList || [])) if (!mine.includes(w)) throw new ForbiddenError(`Ward ${w} is outside your scope`);
     }
 
-    // Resolve or create the user.
+    // Resolve or create the user. Attaching an EXISTING user (e.g. a volunteer
+    // already working for another candidate) only adds a grant — the account
+    // must already carry the same role, or the roles would silently diverge.
     let target;
     if (existingUserId) {
         target = await userModel.findById(parseInt(existingUserId, 10));
         if (!target) throw new NotFoundError('User not found');
+        if (target.role !== targetRole) {
+            throw new ValidationError(`@${target.username} is a ${target.role}, not a ${targetRole}`);
+        }
     } else {
         if (!name || !username || !password) {
             throw new ValidationError('name, username and password are required');
@@ -304,11 +385,27 @@ async function createUser(req, res) {
         });
     }
 
-    // Campaign tenant: the caller's campaign, or (super-admin creating a candidate)
-    // the new candidate themselves.
-    const politicalCandidateId = req.user.is_super_admin
-        ? (targetRole === 'candidate' ? target.user_id : (req.body.political_candidate_id || null))
-        : campaignId(req);
+    // Campaign axis per role:
+    //  - a CANDIDATE is their own campaign, and their grant carries the PARTY
+    //    that registered them (the Political Admin's party — this is what
+    //    party isolation hangs off);
+    //  - everyone else inherits the caller's campaign (candidate → admin →
+    //    sub admin → volunteer all share the candidate's id).
+    let politicalCandidateId;
+    let grantPartyId = null;
+    if (targetRole === 'candidate') {
+        politicalCandidateId = target.user_id;
+        if (req.user.is_super_admin) {
+            grantPartyId = req.body.party_id || 'default';
+        } else {
+            grantPartyId = callerPartyIds(req)[0] || null;
+            if (!grantPartyId) throw new ForbiddenError('No party assigned to your account');
+        }
+    } else {
+        politicalCandidateId = req.user.is_super_admin
+            ? (req.body.political_candidate_id || null)
+            : campaignId(req);
+    }
 
     // One grant per selected constituency.
     for (const cid of constituencies) {
@@ -320,6 +417,7 @@ async function createUser(req, res) {
             allowedWards: (targetRole === 'sub_admin' || targetRole === 'volunteer') ? (wardList || null) : null,
             allowedVoterAreas: targetRole === 'volunteer' ? (areaList || null) : null,
             politicalCandidateId,
+            partyId: grantPartyId,
         });
     }
 
@@ -332,6 +430,9 @@ async function updateRegion(req, res) {
     const { constituency_id, role: targetRole, wards: wardList, voter_areas: areaList } = req.body || {};
     if (!constituency_id || !targetRole) throw new ValidationError('constituency_id and role required');
     if (RANK[targetRole] >= RANK[role]) throw new ForbiddenError('Outside your scope');
+    if (!(await targetInScope(req, parseInt(req.params.user_id, 10)))) {
+        throw new ForbiddenError('User is outside your hierarchy');
+    }
 
     await candidateModel.grantUserAccess({
         userId: parseInt(req.params.user_id, 10),
@@ -361,6 +462,9 @@ async function updateUser(req, res) {
     if (uid !== req.user.user_id && RANK[target.role] >= RANK[role]) {
         throw new ForbiddenError('Cannot edit a user at or above your level');
     }
+    if (uid !== req.user.user_id && !(await targetInScope(req, uid))) {
+        throw new ForbiddenError('User is outside your hierarchy');
+    }
 
     const { name, email, phone, is_active, password } = req.body || {};
     // Only pass provided fields — userModel.update would null out the rest.
@@ -377,18 +481,54 @@ async function updateUser(req, res) {
     res.json({ success: true, user });
 }
 
-/** DELETE /api/management/users/:user_id — remove a managed user (hard delete). */
+/**
+ * DELETE /api/management/users/:user_id
+ * Super admin: hard delete. Everyone else DETACHES the user from their own
+ * hierarchy only — a volunteer shared with another candidate keeps that
+ * candidate's grant (and their login); the account is deleted only once no
+ * grant anywhere references it.
+ */
 async function removeUser(req, res) {
     const role = callerRole(req);
-    if (!role || role === 'volunteer') throw new ForbiddenError('You cannot delete users');
+    if (!role || role === 'volunteer' || role === 'donor') throw new ForbiddenError('You cannot delete users');
     const uid = parseInt(req.params.user_id, 10);
     if (uid === req.user.user_id) throw new ForbiddenError('Cannot delete yourself');
 
     const target = await userModel.findById(uid);
     if (!target) throw new NotFoundError('User not found');
     if (RANK[target.role] >= RANK[role]) throw new ForbiddenError('Cannot delete a user at or above your level');
-    await userModel.remove(uid);
-    res.json({ success: true });
+
+    if (req.user.is_super_admin) {
+        await userModel.remove(uid);
+        return res.json({ success: true });
+    }
+    if (!(await targetInScope(req, uid))) throw new ForbiddenError('User is outside your hierarchy');
+
+    if (role === 'tenant_admin') {
+        const partyIds = callerPartyIds(req);
+        await query(
+            `DELETE FROM user_candidates
+              WHERE user_id = $1
+                AND (party_id = ANY($2)
+                     OR political_candidate_id IN (
+                        SELECT uc2.user_id FROM user_candidates uc2
+                         WHERE uc2.role = 'candidate' AND uc2.party_id = ANY($2)))`,
+            [uid, partyIds]
+        );
+        await query(`DELETE FROM user_parties WHERE user_id = $1 AND party_id = ANY($2)`, [uid, partyIds]);
+    } else {
+        await query(
+            `DELETE FROM user_candidates WHERE user_id = $1 AND political_candidate_id = $2`,
+            [uid, campaignId(req)]
+        );
+    }
+
+    const [grants, parties] = await Promise.all([
+        candidateModel.listForUser(uid),
+        partyModel.listForUser(uid),
+    ]);
+    if (grants.length === 0 && parties.length === 0) await userModel.remove(uid);
+    res.json({ success: true, removed: grants.length === 0 && parties.length === 0 });
 }
 
 module.exports = { context, wards, voterAreas, listUsers, createUser, updateUser, updateRegion, removeUser };

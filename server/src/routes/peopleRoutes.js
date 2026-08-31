@@ -21,10 +21,17 @@ router.delete('/volunteers/:user_id',             asyncHandler(c.removeVolunteer
 
 // ── User search (for "select existing volunteer" picker) ──────────────────────
 router.get('/users/search', asyncHandler(async (req, res) => {
-    if (!req.user?.is_super_admin && req.user?.role !== 'candidate') {
+    const managerRoles = ['candidate', 'admin', 'sub_admin'];
+    if (!req.user?.is_super_admin && !managerRoles.includes(req.user?.role)) {
         return res.status(403).json({ error: 'Forbidden' });
     }
-    const users = await userModel.searchAll({ search: req.query.q, limit: 20 });
+    // Campaign staff search only volunteers (to attach an existing one to
+    // their candidate) — never the whole user base.
+    const users = await userModel.searchAll({
+        search: req.query.q,
+        limit: 20,
+        role: req.user.is_super_admin ? null : 'volunteer',
+    });
     res.json({ success: true, users });
 }));
 
