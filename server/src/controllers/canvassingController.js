@@ -88,26 +88,39 @@ async function voterLocations(req, res) {
  * any other party is reachable here (join on user_candidates.party_id).
  * Super admins may inspect any party via ?party_id=.
  */
-async function partyRecords(req, res) {
+function partyScope(req) {
     const myParties = (req.user?.parties || [])
         .filter((p) => p.role === 'tenant_admin')
         .map((p) => p.id);
-
-    let partyIds;
     if (req.user?.is_super_admin) {
         if (!req.query.party_id) throw new ValidationError('party_id required');
-        partyIds = [req.query.party_id];
-    } else {
-        if (!myParties.length) throw new ForbiddenError('Political Admin only');
-        partyIds = myParties;
+        return [req.query.party_id];
     }
+    if (!myParties.length) throw new ForbiddenError('Political Admin only');
+    return myParties;
+}
 
-    const out = await canvassingModel.partyRecords(partyIds, {
+async function partyRecords(req, res) {
+    const pc = req.query.political_candidate_id
+        ? parseInt(req.query.political_candidate_id, 10)
+        : null;
+    const out = await canvassingModel.partyRecords(partyScope(req), {
         limit: Math.min(parseInt(req.query.limit || 50, 10) || 50, 500),
         offset: parseInt(req.query.offset || 0, 10) || 0,
         search: req.query.q || null,
+        politicalCandidateId: Number.isNaN(pc) ? null : pc,
     });
     res.json({ success: true, ...out });
+}
+
+/**
+ * GET /api/canvassing/party-stats
+ * One aggregate row per candidate of the caller's party (survey totals,
+ * unique voters, strong support, follow-ups, last canvass date).
+ */
+async function partyStats(req, res) {
+    const rows = await canvassingModel.partyStats(partyScope(req));
+    res.json({ success: true, stats: rows });
 }
 
 async function voterRecords(req, res) {
@@ -133,5 +146,6 @@ module.exports = {
     voterLocations,
     voterRecords,
     partyRecords,
+    partyStats,
     stats,
 };

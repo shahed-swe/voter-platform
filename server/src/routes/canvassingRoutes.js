@@ -11,6 +11,7 @@ router.post('/voter-locations', verifyToken, asyncHandler(c.voterLocations));
 router.get('/voter-records', verifyToken, asyncHandler(c.voterRecords));
 // Party-wide survey view for the Political Admin (party-isolated).
 router.get('/party-records', verifyToken, asyncHandler(c.partyRecords));
+router.get('/party-stats', verifyToken, asyncHandler(c.partyStats));
 router.get('/stats', optionalAuth, asyncHandler(c.stats));
 
 module.exports = router;

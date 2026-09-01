@@ -322,6 +322,9 @@ function ViewUserModal({ user: u, onClose }) {
                     )}
                     {u.allowed_wards?.length ? <Row label="Wards" value={u.allowed_wards.join(', ')} /> : null}
                     {u.allowed_voter_areas?.length ? <Row label="Voter areas" value={`${u.allowed_voter_areas.length}টি — ${u.allowed_voter_areas.join(', ')}`} /> : null}
+                    {u.granted_by_name && (
+                        <Row label="যোগ করেছেন" value={`${u.granted_by_name}${ROLE_LABEL[u.granted_by_role] ? ` (${ROLE_LABEL[u.granted_by_role]})` : ''}`} />
+                    )}
                     <Row label="Status" value={u.is_active === false ? 'Inactive' : 'Active'} />
                 </div>
                 <div className="px-5 py-3 border-t border-gray-100 flex justify-end">
@@ -446,6 +449,96 @@ function EditUserModal({ user: u, onClose, onSaved }) {
     );
 }
 
+// ── Hierarchy grouping ────────────────────────────────────────────────────────
+// The flat grant list becomes campaign trees: one group per candidate, and
+// inside it Candidate → Campaign Admins → Sub-admins (each with the volunteers
+// THEY assigned, via granted_by) → any remaining volunteers. Party-level rows
+// (Political Admins / Donors) and legacy rows without a campaign get their own
+// sections. A volunteer serving two candidates appears once under EACH.
+function buildHierarchy(users) {
+    const partyRows  = users.filter((u) => u.party_id && !u.candidate_id);
+    const campaignRows = users.filter((u) => !(u.party_id && !u.candidate_id));
+
+    const groups = new Map(); // pcId → { candidate, admins, subs, volsBySub, looseVols, name, constituency }
+    const orphans = [];
+    for (const u of campaignRows) {
+        const pcId = u.political_candidate_id ? String(u.political_candidate_id) : null;
+        if (!pcId) { orphans.push(u); continue; }
+        if (!groups.has(pcId)) {
+            groups.set(pcId, { candidate: null, admins: [], subs: [], vols: [], name: null, constituency: null });
+        }
+        const g = groups.get(pcId);
+        g.name ||= u.political_candidate_name;
+        g.constituency ||= u.constituency_name;
+        if (u.role === 'candidate' && String(u.user_id) === pcId) { g.candidate = u; g.name = u.name; }
+        else if (u.role === 'admin') g.admins.push(u);
+        else if (u.role === 'sub_admin') g.subs.push(u);
+        else g.vols.push(u);
+    }
+    for (const g of groups.values()) {
+        const subIds = new Set(g.subs.map((s) => String(s.user_id)));
+        g.volsBySub = {};
+        g.looseVols = [];
+        for (const v of g.vols) {
+            if (v.granted_by && subIds.has(String(v.granted_by))) {
+                (g.volsBySub[String(v.granted_by)] ||= []).push(v);
+            } else {
+                g.looseVols.push(v);
+            }
+        }
+        g.count = (g.candidate ? 1 : 0) + g.admins.length + g.subs.length + g.vols.length;
+    }
+    const ordered = [...groups.entries()].sort((a, b) => (a[1].name || '').localeCompare(b[1].name || ''));
+    return { partyRows, groups: ordered, orphans };
+}
+
+function UserRow({ u, depth = 0, note, onView, onEdit, onDelete }) {
+    return (
+        <div
+            className={`flex items-center gap-3 px-4 py-2.5 ${depth === 2 ? 'bg-gray-50/60' : ''}`}
+            style={depth ? { paddingLeft: `${1 + depth * 1.5}rem` } : undefined}
+        >
+            {depth === 2 && <i className="fas fa-arrow-turn-up fa-rotate-90 text-gray-300 text-xs flex-shrink-0" aria-hidden="true" />}
+            <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                    <span className="font-medium text-gray-900">{u.name}</span>
+                    <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${ROLE_BADGE[u.role] || 'bg-gray-100 text-gray-600'}`}>
+                        {ROLE_LABEL[u.role] || u.role}
+                    </span>
+                </div>
+                <div className="text-xs text-gray-500 mt-0.5">
+                    @{u.username}
+                    {u.party_name && !u.candidate_id ? ` · ${u.party_name} (দল)` : ''}
+                    {u.allowed_wards?.length ? <span className="bn"> · ওয়ার্ড {u.allowed_wards.join(', ')}</span> : null}
+                    {u.allowed_voter_areas?.length ? <span className="bn"> · {u.allowed_voter_areas.length} area</span> : null}
+                    {note ? <span className="text-gray-400"> · {note}</span> : null}
+                </div>
+            </div>
+            <button
+                className="text-xs border border-gray-200 text-gray-600 px-2 py-1.5 rounded-md hover:bg-gray-50 flex-shrink-0"
+                onClick={() => onView(u)}
+                title="View details"
+            >
+                <i className="fas fa-eye" />
+            </button>
+            <button
+                className="text-xs border border-brand/30 text-brand px-2 py-1.5 rounded-md hover:bg-brand/5 flex-shrink-0"
+                onClick={() => onEdit(u)}
+                title="Edit"
+            >
+                <i className="fas fa-pen" />
+            </button>
+            <button
+                className="text-xs border border-red-200 text-red-600 px-2 py-1.5 rounded-md hover:bg-red-50 flex-shrink-0"
+                onClick={() => onDelete(u)}
+                title="Delete"
+            >
+                <i className="fas fa-trash" />
+            </button>
+        </div>
+    );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function ManagementPage() {
     const { user } = useAuth();
@@ -502,48 +595,74 @@ export default function ManagementPage() {
 
             {users.length === 0 ? (
                 <EmptyState icon="fa-users" label="এখনো কোনো user নেই। উপরের বাটন থেকে যোগ করুন।" />
-            ) : (
-                <div className="space-y-2">
-                    {users.map((u) => (
-                        <div key={`${u.user_id}-${u.candidate_id || u.party_id}-${u.role}`} className="bg-white border border-gray-200 rounded-lg px-4 py-3 flex items-center gap-3">
-                            <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2">
-                                    <span className="font-medium text-gray-900">{u.name}</span>
-                                    <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${ROLE_BADGE[u.role] || 'bg-gray-100 text-gray-600'}`}>
-                                        {ROLE_LABEL[u.role] || u.role}
+            ) : (() => {
+                const { partyRows, groups, orphans } = buildHierarchy(users);
+                const rowActions = { onView: setViewTarget, onEdit: setEditTarget, onDelete: handleDelete };
+                const key = (u) => `${u.user_id}-${u.candidate_id || u.party_id}-${u.political_candidate_id || ''}-${u.role}`;
+                return (
+                    <div className="space-y-4">
+                        {partyRows.length > 0 && (
+                            <section className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                                <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100">
+                                    <h2 className="text-sm font-semibold text-gray-800">
+                                        <i className="fas fa-flag text-rose-500 mr-2" />দল পর্যায় (Political Admin / Donor)
+                                    </h2>
+                                </div>
+                                <div className="divide-y divide-gray-100">
+                                    {partyRows.map((u) => <UserRow key={key(u)} u={u} {...rowActions} />)}
+                                </div>
+                            </section>
+                        )}
+
+                        {groups.map(([pcId, g]) => (
+                            <section key={pcId} className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                                {/* Which candidate's campaign this whole tree belongs to */}
+                                <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center justify-between gap-3">
+                                    <h2 className="text-sm font-semibold text-gray-800 truncate">
+                                        <i className="fas fa-user-tie text-purple-500 mr-2" />
+                                        {g.name || 'Campaign'}
+                                        {g.constituency && <span className="text-gray-400 font-normal"> · {g.constituency}</span>}
+                                    </h2>
+                                    <span className="text-[11px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full whitespace-nowrap bn">
+                                        {g.count} জন
                                     </span>
                                 </div>
-                                <div className="text-xs text-gray-500 mt-0.5">
-                                    @{u.username} · {u.constituency_name || (u.party_name ? `${u.party_name} (দল)` : '')}
-                                    {u.allowed_wards?.length ? <span className="bn"> · ওয়ার্ড {u.allowed_wards.join(', ')}</span> : null}
-                                    {u.allowed_voter_areas?.length ? <span className="bn"> · {u.allowed_voter_areas.length} area</span> : null}
+                                <div className="divide-y divide-gray-100">
+                                    {g.candidate && <UserRow key={key(g.candidate)} u={g.candidate} {...rowActions} />}
+                                    {g.admins.map((a) => <UserRow key={key(a)} u={a} depth={1} {...rowActions} />)}
+                                    {g.subs.map((s) => (
+                                        <div key={key(s)} className="divide-y divide-gray-50">
+                                            <UserRow u={s} depth={1} {...rowActions} />
+                                            {(g.volsBySub[String(s.user_id)] || []).map((v) => (
+                                                <UserRow key={key(v)} u={v} depth={2}
+                                                         note={`যোগ করেছেন ${s.name}`} {...rowActions} />
+                                            ))}
+                                        </div>
+                                    ))}
+                                    {g.looseVols.map((v) => (
+                                        <UserRow key={key(v)} u={v} depth={1}
+                                                 note={v.granted_by_name ? `যোগ করেছেন ${v.granted_by_name}` : null}
+                                                 {...rowActions} />
+                                    ))}
                                 </div>
-                            </div>
-                            <button
-                                className="text-xs border border-gray-200 text-gray-600 px-2 py-1.5 rounded-md hover:bg-gray-50"
-                                onClick={() => setViewTarget(u)}
-                                title="View details"
-                            >
-                                <i className="fas fa-eye" />
-                            </button>
-                            <button
-                                className="text-xs border border-brand/30 text-brand px-2 py-1.5 rounded-md hover:bg-brand/5"
-                                onClick={() => setEditTarget(u)}
-                                title="Edit"
-                            >
-                                <i className="fas fa-pen" />
-                            </button>
-                            <button
-                                className="text-xs border border-red-200 text-red-600 px-2 py-1.5 rounded-md hover:bg-red-50"
-                                onClick={() => handleDelete(u)}
-                                title="Delete"
-                            >
-                                <i className="fas fa-trash" />
-                            </button>
-                        </div>
-                    ))}
-                </div>
-            )}
+                            </section>
+                        ))}
+
+                        {orphans.length > 0 && (
+                            <section className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                                <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100">
+                                    <h2 className="text-sm font-semibold text-gray-800">
+                                        <i className="fas fa-users text-gray-400 mr-2" />কোনো campaign-এ যুক্ত নয়
+                                    </h2>
+                                </div>
+                                <div className="divide-y divide-gray-100">
+                                    {orphans.map((u) => <UserRow key={key(u)} u={u} {...rowActions} />)}
+                                </div>
+                            </section>
+                        )}
+                    </div>
+                );
+            })()}
 
             {showCreate && (
                 <CreateUserModal ctx={ctx} onClose={() => setShowCreate(false)}

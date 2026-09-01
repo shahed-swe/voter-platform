@@ -117,12 +117,18 @@ async function listVoterRecords(candidateId, { limit = 200, offset = 0, search =
  * every constituency. Powers the Political Admin's party-wide survey view;
  * strict party isolation comes from the user_candidates.party_id join.
  */
-async function partyRecords(partyIds, { limit = 50, offset = 0, search = null } = {}) {
+async function partyRecords(partyIds, { limit = 50, offset = 0, search = null, politicalCandidateId = null } = {}) {
     const params = [partyIds];
     let searchClause = '';
     if (search) {
         params.push(`%${search}%`);
         searchClause = `AND (v.name ILIKE $${params.length} OR v.sos_vid ILIKE $${params.length} OR u.name ILIKE $${params.length})`;
+    }
+    // Drill-down to one candidate's campaign (the party join above still
+    // guarantees that candidate belongs to the party).
+    if (politicalCandidateId != null) {
+        params.push(politicalCandidateId);
+        searchClause += ` AND c.political_candidate_id = $${params.length}`;
     }
     const base = `
        FROM canvassing c
@@ -155,6 +161,30 @@ async function partyRecords(partyIds, { limit = 50, offset = 0, search = null } 
         params
     );
     return { records, total: totalRow?.total || 0 };
+}
+
+/**
+ * Per-candidate survey aggregates for a party — one row per candidate the
+ * party has registered (zero-canvass candidates included), so the Political
+ * Admin's overview can show real numbers next to every candidate.
+ */
+async function partyStats(partyIds) {
+    return many(
+        `SELECT pcu.user_id AS candidate_user_id,
+                pcu.name    AS candidate_name,
+                COUNT(cv.canvass_id)::int                                        AS total,
+                COUNT(DISTINCT cv.voter_id)::int                                 AS unique_voters,
+                COUNT(cv.canvass_id) FILTER (WHERE cv.support_rating >= 4)::int  AS strong_support,
+                COUNT(cv.canvass_id) FILTER (WHERE cv.follow_up_needed)::int     AS follow_up,
+                MAX(cv.canvass_date)                                             AS last_canvass
+           FROM user_candidates uc
+           JOIN users pcu ON pcu.user_id = uc.user_id
+           LEFT JOIN canvassing cv ON cv.political_candidate_id = uc.user_id
+          WHERE uc.role = 'candidate' AND uc.party_id = ANY($1)
+          GROUP BY pcu.user_id, pcu.name
+          ORDER BY total DESC, pcu.name`,
+        [partyIds]
+    );
 }
 
 async function stats(candidateId, politicalCandidateId = null, userId = null) {
@@ -305,6 +335,7 @@ module.exports = {
     voterLocationsByScope,
     listVoterRecords,
     partyRecords,
+    partyStats,
     stats,
     submit,
 };

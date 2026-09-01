@@ -4,6 +4,7 @@ import ProtectedRoute from './auth/ProtectedRoute.jsx';
 import { useAuth } from './auth/AuthContext.jsx';
 import { roleHome } from './auth/roleHome.js';
 import PartyHomePage from './pages/party/PartyHomePage.jsx';
+import PartyCandidatePage from './pages/party/PartyCandidatePage.jsx';
 import PartySurveysPage from './pages/party/PartySurveysPage.jsx';
 import DonorProfilePage from './pages/donor/DonorProfilePage.jsx';
 
@@ -44,6 +45,7 @@ export default function App() {
                 <Route index element={<RoleLanding />} />
                 {/* Party-level pages (Political Admin / Donor) */}
                 <Route path="/party" element={<PartyHomePage />} />
+                <Route path="/party/candidates/:userId" element={<PartyCandidatePage />} />
                 <Route path="/party/surveys" element={<PartySurveysPage />} />
                 <Route path="/donor" element={<DonorProfilePage />} />
                 <Route path="/dashboard"        element={<DashboardPage />} />

@@ -7,4 +7,5 @@ export const allLocations        = (params)        => client.get('/canvassing/al
 export const voterLocations      = (body)          => client.post('/canvassing/voter-locations', body).then((r) => r.data);
 export const voterRecords        = (params)        => client.get('/canvassing/voter-records', { params }).then((r) => r.data);
 export const partyRecords        = (params)        => client.get('/canvassing/party-records', { params }).then((r) => r.data);
+export const partyStats          = (params)        => client.get('/canvassing/party-stats',   { params }).then((r) => r.data);
 export const stats               = ()              => client.get('/canvassing/stats').then((r) => r.data);

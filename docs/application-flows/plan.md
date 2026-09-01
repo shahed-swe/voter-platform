@@ -74,6 +74,20 @@ Two causes, both fixed:
   assigned areas, filtered/search/detail return only assigned-area voters,
   out-of-assignment requests 403/404, unrestricted users unaffected.
 
+**Progress update (2026-09-01, Political Admin UX):** hierarchy-first redesign
+of the PA views. `/party` shows real per-candidate survey numbers (new
+`GET /api/canvassing/party-stats`, one aggregate row per party candidate) and
+each candidate row drills into the new `/party/candidates/:userId` page —
+campaign tree (Campaign Admin → Sub-admin → the volunteers that sub-admin
+assigned, via the new `granted_by` fields on `/api/management/users`) plus
+that candidate's surveys only (`party-records?political_candidate_id=`).
+`/party/surveys` gained per-candidate filter chips (shared
+`PartySurveyTable` component). Team Management now renders campaign-grouped
+trees instead of a flat list: each section is one candidate's campaign, nested
+volunteers show "যোগ করেছেন <sub-admin>", and a multi-campaign volunteer
+appears once under EACH campaign (listUsers DISTINCT now includes the
+campaign). All of it read-only additions on top of the existing isolation.
+
   Remaining from Steps 1–4: analytics-geo scoping sweep, JWT versioning,
   candidate/sub-admin dashboards.
 

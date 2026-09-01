@@ -269,18 +269,23 @@ async function listUsers(req, res) {
         where.push(`uc.allowed_wards && $${params.length}`);
     }
 
+    // One row per (user, constituency, campaign): a volunteer serving two
+    // candidates appears once under EACH campaign — that's the true hierarchy.
+    // granted_by tells the client who added this person (sub-admin → volunteer).
     const rows = await many(
-        `SELECT DISTINCT ON (u.user_id, uc.candidate_id)
+        `SELECT DISTINCT ON (u.user_id, uc.candidate_id, uc.political_candidate_id)
                 u.user_id, u.username, u.name, u.email, u.phone, u.is_active,
                 uc.candidate_id, uc.role, uc.allowed_wards, uc.allowed_voter_areas,
                 uc.political_candidate_id, uc.party_id, pc.name AS political_candidate_name,
+                uc.granted_by, gb.name AS granted_by_name, gb.role AS granted_by_role,
                 c.name AS constituency_name
            FROM user_candidates uc
            JOIN users u ON u.user_id = uc.user_id
            JOIN candidates c ON c.candidate_id = uc.candidate_id
            LEFT JOIN users pc ON pc.user_id = uc.political_candidate_id
+           LEFT JOIN users gb ON gb.user_id = uc.granted_by
           WHERE ${where.join(' AND ')}
-          ORDER BY u.user_id, uc.candidate_id, uc.role`,
+          ORDER BY u.user_id, uc.candidate_id, uc.political_candidate_id, uc.role`,
         params
     );
 
