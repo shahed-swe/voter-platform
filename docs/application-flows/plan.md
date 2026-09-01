@@ -322,15 +322,24 @@ correct nav, correctly narrowed data (this last check is the user's).
 
 ---
 
-## Step 5 — Voter support history & multi-party volunteers (after 1–4 ship)
-- [ ] Tenant/Main voter-history timeline UI (drawer fed by
-      `/canvassing/voter-history/:id`) reachable from survey/records views.
-- [ ] "Persuadable voters" list (voters with >1 visit and changed support) in
-      `analyticsModel` + page/section for tenant admin (§10).
-- [ ] Main-admin cross-party history: match voters across constituency rows by
-      voter number/NID (best-effort; document the caveat).
-- [ ] `GET /api/admin/multi-party-volunteers` (grants spanning >1 party_id) +
-      main-admin page (§5).
+## Step 5 — Voter support history & multi-party volunteers — DONE 2026-09-01
+- [x] `GET /api/canvassing/voter-history/:id` — PA: party-scoped full timeline
+      (candidates/volunteers 403, spec §10 says Tenant Admin only); Main
+      Admin: cross-party via sos_vid roll matching (caveat documented in
+      `crossPartyVoterHistory`). Timeline drawer
+      (`components/party/VoterHistoryDrawer`) opens from voter names in the
+      party survey + persuadable tables, with a changed/unchanged verdict.
+- [x] Persuadable voters: `GET /api/canvassing/party-persuadable`
+      (>1 visit AND changed support_level/rating, grouped per voter with
+      ordered journey arrays) + "Persuadable ভোটার" tab on /party/surveys
+      (`components/party/PersuadableTable`, journey chips).
+- [x] `GET /api/admin/multi-party-volunteers` (volunteer grants whose campaign
+      candidates span >1 party_id) + super-only /admin/multi-party-volunteers
+      page, linked from the Admin dropdown (§5).
+- [x] Verified live: 2-visit changed-answer voter appears with journey; a
+      REAL persuadable case surfaced from existing data (নিশান রহিম, Strong
+      oppose → Strong support); volunteer + candidate 403 on history; PA 403
+      on multi-party view; test canvasses removed.
 
 ## Step 6 — Donations (§9) — DONE 2026-09-01
 - [x] `025_donations.sql` (applied): `donations(party_id, donor_user_id,
@@ -352,7 +361,16 @@ correct nav, correctly narrowed data (this last check is the user's).
       NOTE: the candidate donation-record form idea (§12) was intentionally
       dropped — the spec's flow is donor→volunteer only.
 
-## Step 7 — Candidate selection & data handover (§8)
+## Step 7 — Candidate selection & data handover (§8) — DONE 2026-09-01
+Implemented as `026_candidate_selection.sql` + `selectionController` (mounted
+at `/api/selection`): transactional handover of canvassing + donations + team
+grants toward the selected candidate, audit-logged, re-selectable; UI on
+/party per constituency with a comparison modal + "দলের চূড়ান্ত" badge.
+Also landed the same day: campaign home dashboards (`/campaign`) for
+candidate/admin/sub_admin, the analytics ward/area scoping sweep (canvass
+metrics + roll denominators), optionalAuth removal, JWT v2 versioning, and
+header-only token extraction. Original outline below for reference.
+
 - [ ] `025_candidate_selection.sql`: `candidate_selections(party_id,
       candidate_id, selected_political_candidate_id, decided_by, decided_at,
       UNIQUE(party_id, candidate_id))`.

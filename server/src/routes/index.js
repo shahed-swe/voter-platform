@@ -20,6 +20,9 @@ router.use('/management', require('./managementRoutes'));
 // Party-scoped, not constituency-scoped, so it sits before the scope middleware.
 router.use('/donations', require('./donationRoutes'));
 
+// Candidate selection & data handover (§8) — the Political Admin's final pick.
+router.use('/selection', require('./selectionRoutes'));
+
 // Everything else requires authentication AND a candidate scope (set on req.candidateId).
 router.use(verifyToken, scopeToCandidate);
 

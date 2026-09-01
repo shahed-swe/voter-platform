@@ -21,8 +21,10 @@ import CandidatesListPage from './pages/admin/CandidatesListPage.jsx';
 import CreateCandidatePage from './pages/admin/CreateCandidatePage.jsx';
 import ImportDataPage from './pages/admin/ImportDataPage.jsx';
 import PoliticalCandidatesPage from './pages/admin/PoliticalCandidatesPage.jsx';
+import MultiPartyVolunteersPage from './pages/admin/MultiPartyVolunteersPage.jsx';
 import VolunteerManagementPage from './pages/candidate/VolunteerManagementPage.jsx';
 import ManagementPage from './pages/admin/ManagementPage.jsx';
+import CampaignHomePage from './pages/campaign/CampaignHomePage.jsx';
 import NotFoundPage from './pages/NotFoundPage.jsx';
 
 // Role-aware landing: party-level roles (Political Admin / Donor) get their
@@ -57,6 +59,15 @@ export default function App() {
                     element={
                         <ProtectedRoute roles={['volunteer']}>
                             <VolunteerDonationsPage />
+                        </ProtectedRoute>
+                    }
+                />
+                {/* Campaign-scoped home for the chain below the Political Admin */}
+                <Route
+                    path="/campaign"
+                    element={
+                        <ProtectedRoute roles={['candidate', 'admin', 'sub_admin']}>
+                            <CampaignHomePage />
                         </ProtectedRoute>
                     }
                 />
@@ -127,6 +138,15 @@ export default function App() {
                     element={
                         <ProtectedRoute requireSuperAdmin>
                             <PoliticalCandidatesPage />
+                        </ProtectedRoute>
+                    }
+                />
+                {/* §5: volunteers working across parties — Main Admin only */}
+                <Route
+                    path="/admin/multi-party-volunteers"
+                    element={
+                        <ProtectedRoute requireSuperAdmin>
+                            <MultiPartyVolunteersPage />
                         </ProtectedRoute>
                     }
                 />

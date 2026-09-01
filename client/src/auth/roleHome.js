@@ -18,5 +18,7 @@ export function roleHome(user) {
     if (user.is_super_admin) return '/dashboard';
     if (isPartyAdmin(user)) return '/party';
     if (isDonor(user)) return '/donor';
+    // The campaign chain gets its own campaign-scoped home.
+    if (['candidate', 'admin', 'sub_admin'].includes(user.role)) return '/campaign';
     return '/dashboard';
 }

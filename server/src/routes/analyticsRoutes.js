@@ -1,9 +1,9 @@
 const router = require('express').Router();
 const asyncHandler = require('../utils/asyncHandler');
-const { optionalAuth } = require('../middleware/auth');
+const { verifyToken } = require('../middleware/auth');
 const c = require('../controllers/analyticsController');
 
-router.use(optionalAuth);
+router.use(verifyToken);
 
 router.get('/overview', asyncHandler(c.overview));
 router.get('/support-distribution', asyncHandler(c.supportDistribution));

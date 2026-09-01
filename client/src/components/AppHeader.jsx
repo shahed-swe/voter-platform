@@ -19,10 +19,11 @@ const MAIN_NAV = [
 ];
 
 const ADMIN_DROPDOWN = [
-    { to: '/management',                 label: 'Team Management', icon: 'fa-sitemap' },
-    { to: '/admin/candidates',           label: 'Constituencies',  icon: 'fa-map-location-dot' },
-    { to: '/admin/political-candidates', label: 'Candidates',      icon: 'fa-user-tie' },
-    { to: '/admin/import',               label: 'Import Data',     icon: 'fa-database' },
+    { to: '/management',                    label: 'Team Management',        icon: 'fa-sitemap' },
+    { to: '/admin/candidates',              label: 'Constituencies',         icon: 'fa-map-location-dot' },
+    { to: '/admin/political-candidates',    label: 'Candidates',             icon: 'fa-user-tie' },
+    { to: '/admin/multi-party-volunteers',  label: 'Multi-party Volunteers', icon: 'fa-people-arrows' },
+    { to: '/admin/import',                  label: 'Import Data',            icon: 'fa-database' },
 ];
 
 // Team management for the mid-hierarchy manager roles (candidate → admin → sub_admin).
@@ -159,12 +160,14 @@ export default function AppHeader() {
     const showManager = !user?.is_super_admin && ['candidate', 'admin', 'sub_admin'].includes(user?.role);
 
     const volunteer = !user?.is_super_admin && user?.role === 'volunteer';
+    const campaignRole = !user?.is_super_admin && ['candidate', 'admin', 'sub_admin'].includes(user?.role);
 
     // Party-level roles see only their own pages; volunteers only the field
-    // tools; everyone else the full nav.
+    // tools; the campaign chain gets its campaign home first; supers the full nav.
     const mainNav = partyAdmin ? PARTY_ADMIN_NAV
         : donor ? DONOR_NAV
         : volunteer ? VOLUNTEER_NAV
+        : campaignRole ? [{ to: '/campaign', label: 'My Campaign', icon: 'fa-flag-checkered' }, ...MAIN_NAV]
         : MAIN_NAV;
     const roleLabel = user?.is_super_admin ? 'Super Admin'
         : partyAdmin ? 'Political Admin'

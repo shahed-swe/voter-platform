@@ -123,6 +123,41 @@ async function partyStats(req, res) {
     res.json({ success: true, stats: rows });
 }
 
+/**
+ * GET /api/canvassing/voter-history/:voter_id
+ * §10: the voter's FULL visit timeline. Political Admin — every visit by his
+ * own party's campaigns. Main Admin — across all parties, with cross-roll
+ * matching by voter number (each party imports its own roll, so the same
+ * physical voter is a separate row per party; rows without a voter number
+ * can't be matched — best-effort).
+ */
+async function voterHistory(req, res) {
+    const voterId = req.params.voter_id;
+    if (req.user?.is_super_admin) {
+        const visits = await canvassingModel.crossPartyVoterHistory(voterId);
+        return res.json({ success: true, visits, cross_party: true });
+    }
+    const myParties = (req.user?.parties || [])
+        .filter((p) => p.role === 'tenant_admin')
+        .map((p) => p.id);
+    if (!myParties.length) throw new ForbiddenError('Political Admin only');
+    const visits = await canvassingModel.partyVoterHistory(myParties, voterId);
+    res.json({ success: true, visits, cross_party: false });
+}
+
+/**
+ * GET /api/canvassing/party-persuadable
+ * §10: voters visited more than once whose answer CHANGED between visits —
+ * the persuadable ones the Political Admin should study.
+ */
+async function partyPersuadable(req, res) {
+    const out = await canvassingModel.partyPersuadable(partyScope(req), {
+        limit: Math.min(parseInt(req.query.limit || 50, 10) || 50, 500),
+        offset: parseInt(req.query.offset || 0, 10) || 0,
+    });
+    res.json({ success: true, ...out });
+}
+
 async function voterRecords(req, res) {
     const rows = await canvassingModel.listVoterRecords(tenant(req), {
         limit: parseInt(req.query.limit || 200, 10),
@@ -147,5 +182,7 @@ module.exports = {
     voterRecords,
     partyRecords,
     partyStats,
+    voterHistory,
+    partyPersuadable,
     stats,
 };

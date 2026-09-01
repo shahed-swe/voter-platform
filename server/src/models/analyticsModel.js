@@ -41,6 +41,28 @@ function canvassFilter(filters = {}, params, { hasVoters = false, alias = 'c' } 
         params.push(filters.voterAreas);
         parts.push(`v.voter_area_name = ANY($${params.length})`);
     }
+    if (filters.wards?.length && hasVoters) {
+        params.push(filters.wards);
+        parts.push(`v.ward = ANY($${params.length})`);
+    }
+    return parts.length ? ' AND ' + parts.join(' AND ') : '';
+}
+
+/**
+ * Ward/area filter for VOTER-ROLL subqueries (no canvassing join). Keeps the
+ * roll denominators honest for ward-restricted users: a sub-admin's overview
+ * counts THEIR wards' voters, not the whole constituency.
+ */
+function rollFilter(filters = {}, params) {
+    const parts = [];
+    if (filters.wards?.length) {
+        params.push(filters.wards);
+        parts.push(`ward = ANY($${params.length})`);
+    }
+    if (filters.voterAreas?.length) {
+        params.push(filters.voterAreas);
+        parts.push(`voter_area_name = ANY($${params.length})`);
+    }
     return parts.length ? ' AND ' + parts.join(' AND ') : '';
 }
 
@@ -55,10 +77,10 @@ async function overview(candidateId, { politicalCandidateId = null, filters = {}
     // Whole "canvassing subset" is computed once, filtered.
     const { params, where } = scoped(candidateId, politicalCandidateId);
     const jf = canvassFilter(filters, params, { hasVoters: true }); // may add v-based area filter
-    // total_voters is constituency-wide; the rest are from the filtered canvassing.
+    const rf = rollFilter(filters, params); // ward/area narrowing on the roll counts
     return one(
         `SELECT
-            (SELECT COUNT(*) FROM voters WHERE candidate_id = $1)                          AS total_voters,
+            (SELECT COUNT(*) FROM voters WHERE candidate_id = $1 ${rf})                    AS total_voters,
             (SELECT COUNT(DISTINCT c.voter_id) FROM canvassing c
                JOIN voters v ON v.voter_id = c.voter_id
               WHERE ${where} ${jf})                                                        AS visited_voters,
@@ -77,8 +99,8 @@ async function overview(candidateId, { politicalCandidateId = null, filters = {}
             (SELECT COUNT(DISTINCT c.voter_id) FROM canvassing c
                JOIN voters v ON v.voter_id = c.voter_id
               WHERE ${where} ${jf} AND (c.is_undecided = true OR c.support_rating = 3))    AS undecided,
-            (SELECT COUNT(*) FROM voters WHERE candidate_id = $1 AND gender = 'Male')       AS male_voters,
-            (SELECT COUNT(*) FROM voters WHERE candidate_id = $1 AND gender = 'Female')     AS female_voters`,
+            (SELECT COUNT(*) FROM voters WHERE candidate_id = $1 AND gender = 'Male' ${rf})   AS male_voters,
+            (SELECT COUNT(*) FROM voters WHERE candidate_id = $1 AND gender = 'Female' ${rf}) AS female_voters`,
         params
     );
 }
@@ -131,13 +153,14 @@ async function incomeDistribution(candidateId, { politicalCandidateId = null, fi
 async function villagePerformance(candidateId, { limit = 50, politicalCandidateId = null, filters = {} } = {}) {
     const { params, where } = scoped(candidateId, politicalCandidateId);
     const jf = canvassFilter(filters, params, { hasVoters: true });
+    const rf = rollFilter(filters, params);
     params.push(limit);
     const limitIdx = params.length;
     return many(
         `WITH totals AS (
              SELECT voter_area_name, COUNT(*)::int AS total_voters
                FROM voters
-              WHERE candidate_id = $1 AND voter_area_name IS NOT NULL AND voter_area_name <> ''
+              WHERE candidate_id = $1 AND voter_area_name IS NOT NULL AND voter_area_name <> '' ${rf}
               GROUP BY voter_area_name
          ),
          visited AS (

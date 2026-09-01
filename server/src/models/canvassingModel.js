@@ -164,6 +164,105 @@ async function partyRecords(partyIds, { limit = 50, offset = 0, search = null, p
 }
 
 /**
+ * The full visit timeline of ONE voter within a party (§10): every canvass —
+ * any volunteer, any of the party's candidates, any date. Only the Political
+ * Admin reads this (the per-campaign /history endpoint stays campaign-scoped).
+ */
+async function partyVoterHistory(partyIds, voterId) {
+    return many(
+        `SELECT c.canvass_id, c.canvass_date, c.support_level, c.support_rating,
+                c.is_undecided, c.follow_up_needed, c.issues_concerns,
+                u.name AS canvasser_name,
+                pcu.name AS candidate_name,
+                cd.name AS constituency_name,
+                v.name AS voter_name, v.sos_vid, v.ward, v.voter_area_name
+           FROM canvassing c
+           JOIN voters v  ON v.voter_id = c.voter_id
+           JOIN users u   ON u.user_id = c.user_id
+           LEFT JOIN users pcu ON pcu.user_id = c.political_candidate_id
+           JOIN candidates cd ON cd.candidate_id = c.candidate_id
+          WHERE c.voter_id = $2
+            AND EXISTS (
+                SELECT 1 FROM user_candidates uc
+                 WHERE uc.user_id = c.political_candidate_id
+                   AND uc.role = 'candidate' AND uc.party_id = ANY($1))
+          ORDER BY c.canvass_date ASC`,
+        [partyIds, voterId]
+    );
+}
+
+/**
+ * Main-admin cross-party timeline: every canvass of this voter's row PLUS
+ * canvasses on OTHER voter rows carrying the same voter number (sos_vid) —
+ * two parties import the same roll separately, so the same physical voter
+ * exists once per party's constituency row. Best-effort: rolls without a
+ * voter number can't be matched across parties.
+ */
+async function crossPartyVoterHistory(voterId) {
+    return many(
+        `WITH target AS (SELECT voter_id, sos_vid FROM voters WHERE voter_id = $1)
+         SELECT c.canvass_id, c.canvass_date, c.support_level, c.support_rating,
+                c.is_undecided, c.follow_up_needed, c.issues_concerns,
+                u.name AS canvasser_name,
+                pcu.name AS candidate_name,
+                cd.name AS constituency_name,
+                p.name AS party_name,
+                v.name AS voter_name, v.sos_vid, v.ward, v.voter_area_name
+           FROM canvassing c
+           JOIN voters v ON v.voter_id = c.voter_id
+           JOIN target t ON (v.voter_id = t.voter_id
+                             OR (t.sos_vid IS NOT NULL AND t.sos_vid <> '' AND v.sos_vid = t.sos_vid))
+           JOIN users u ON u.user_id = c.user_id
+           LEFT JOIN users pcu ON pcu.user_id = c.political_candidate_id
+           LEFT JOIN user_candidates uc
+             ON uc.user_id = c.political_candidate_id AND uc.role = 'candidate'
+            AND uc.candidate_id = c.candidate_id
+           LEFT JOIN parties p ON p.party_id = uc.party_id
+           JOIN candidates cd ON cd.candidate_id = c.candidate_id
+          ORDER BY c.canvass_date ASC`,
+        [voterId]
+    );
+}
+
+/**
+ * Persuadable voters (§10): visited MORE than once by the party's campaigns
+ * with a CHANGED answer between visits. A voter whose stated preference
+ * shifts is persuadable; one whose answer never changes is not.
+ */
+async function partyPersuadable(partyIds, { limit = 50, offset = 0 } = {}) {
+    const base = `
+       FROM canvassing c
+       JOIN voters v ON v.voter_id = c.voter_id
+      WHERE EXISTS (
+            SELECT 1 FROM user_candidates uc
+             WHERE uc.user_id = c.political_candidate_id
+               AND uc.role = 'candidate' AND uc.party_id = ANY($1))
+      GROUP BY c.voter_id, v.name, v.sos_vid, v.ward, v.voter_area_name, c.candidate_id
+     HAVING COUNT(*) > 1
+        AND (COUNT(DISTINCT c.support_level) > 1 OR COUNT(DISTINCT c.support_rating) > 1)`;
+
+    const totalRow = await one(
+        `SELECT COUNT(*)::int AS total FROM (SELECT c.voter_id ${base}) t`,
+        [partyIds]
+    );
+    const records = await many(
+        `SELECT c.voter_id, v.name AS voter_name, v.sos_vid, v.ward, v.voter_area_name,
+                c.candidate_id,
+                (SELECT cd.name FROM candidates cd WHERE cd.candidate_id = c.candidate_id) AS constituency_name,
+                COUNT(*)::int AS visits,
+                MIN(c.canvass_date) AS first_visit,
+                MAX(c.canvass_date) AS last_visit,
+                array_agg(c.support_level ORDER BY c.canvass_date) AS support_journey,
+                array_agg(c.support_rating ORDER BY c.canvass_date) AS rating_journey
+           ${base}
+          ORDER BY MAX(c.canvass_date) DESC
+          LIMIT $2 OFFSET $3`,
+        [partyIds, limit, offset]
+    );
+    return { records, total: totalRow?.total || 0 };
+}
+
+/**
  * Per-candidate survey aggregates for a party — one row per candidate the
  * party has registered (zero-canvass candidates included), so the Political
  * Admin's overview can show real numbers next to every candidate.
@@ -336,6 +435,9 @@ module.exports = {
     listVoterRecords,
     partyRecords,
     partyStats,
+    partyVoterHistory,
+    crossPartyVoterHistory,
+    partyPersuadable,
     stats,
     submit,
 };

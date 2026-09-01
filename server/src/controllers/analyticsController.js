@@ -36,6 +36,18 @@ function opts(req, extra = {}) {
         filters.canvasserId = req.user.user_id;
         filters.canvasserIds = [];
     }
+    // Ward/area-restricted users (sub-admins, volunteers) get analytics — the
+    // canvass metrics AND the roll denominators — narrowed to their assignment.
+    // A requested area filter can only narrow further, never escape.
+    const allowedWards = req.user?.allowed_wards;
+    if (allowedWards?.length) filters.wards = allowedWards;
+    const allowedAreas = req.user?.allowed_voter_areas;
+    if (allowedAreas?.length) {
+        filters.voterAreas = filters.voterAreas?.length
+            ? filters.voterAreas.filter((a) => allowedAreas.includes(a))
+            : allowedAreas;
+        if (!filters.voterAreas.length) filters.voterAreas = allowedAreas;
+    }
     return { politicalCandidateId: pcId(req), filters, ...extra };
 }
 

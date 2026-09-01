@@ -95,3 +95,62 @@ The target spec is [flowApplication.md](flowApplication.md); execution details l
 - [x] Isolation verified live: cross-party donation attempts 404, wrong
       volunteer cannot confirm, donor cannot read the ledger, volunteer cannot
       donate
+
+## Voter support history (§10) — added 2026-09-01
+
+- [x] Full visit timeline endpoint (`GET /api/canvassing/voter-history/:id`) —
+      Political Admin sees every visit by HIS party's campaigns; candidates,
+      volunteers, and everyone else get 403 (spec: Tenant Admin only)
+- [x] Main Admin cross-party timeline: visits matched across parties' separate
+      voter rolls by voter number (sos_vid) — best-effort, rows without a
+      voter number can't be matched
+- [x] Timeline drawer UI: click any voter name in the party survey /
+      persuadable tables → chronological visit list with support level,
+      rating, follow-up flag, issues, candidate + canvasser per visit, and a
+      "answer changed / unchanged" verdict banner
+- [x] Persuadable voters (`GET /api/canvassing/party-persuadable` + the
+      "Persuadable ভোটার" tab on /party/surveys): voters visited >1 time whose
+      answer CHANGED, with the visit-to-visit journey (e.g. supporter →
+      undecided) — found a real case in live data on first run
+- [x] Main Admin multi-party volunteers view (§5):
+      `GET /api/admin/multi-party-volunteers` + Admin ▸ Multi-party Volunteers
+      page — only the Main Admin sees the overlap; Political Admins get 403
+
+## Candidate selection & data handover (§8) — added 2026-09-01
+
+- [x] `candidate_selections` table (migration 026): one final pick per
+      (seat, party), re-selectable (covers withdrawals)
+- [x] `POST /api/selection` — Political Admin picks the final candidate; ONE
+      transaction re-points the other candidates' canvassing records, donation
+      contexts, and team grants (campaign admin / sub-admin / volunteer) to
+      the selected campaign; shared-volunteer key collisions handled; every
+      run written to audit_logs with moved-counts
+- [x] Party isolation: selecting another party's candidate is impossible (404)
+- [x] UI on `/party`: "চূড়ান্ত candidate নির্বাচন" per constituency — modal
+      compares the seat's candidates side-by-side (surveys, strong support,
+      voters), warns about the handover, and the selected candidate wears a
+      "দলের চূড়ান্ত" badge afterwards
+- [x] Verified live in a sandbox party: canvass + volunteer moved from the
+      losing candidate to the winner; the winner's survey view gained the
+      record, the loser's emptied; audit row correct; sandbox removed
+
+## Role dashboards — added 2026-09-01
+
+- [x] Campaign home (`/campaign`) for Candidate / Campaign Admin / Sub-admin:
+      campaign-scoped stat cards (surveys, unique voters, strong support,
+      undecided, follow-ups, team size), quick actions, team-at-a-glance
+      with role counts — all data already campaign-isolated server-side
+- [x] These roles now land on `/campaign` after login ("My Campaign" nav item);
+      sub-admins see their ward assignment in the header
+
+## Data-scoping sweep & auth hardening — added 2026-09-01
+
+- [x] Analytics narrowed to the caller's ward/voter-area assignment: canvass
+      metrics AND roll denominators (a ward-১৬ sub-admin's overview counts
+      48,944 voters, not the constituency's 368,933); requested filters can
+      only narrow further, never escape
+- [x] All `optionalAuth` routes replaced with mandatory `verifyToken`
+      (analytics, geo, villages, canvassing stats)
+- [x] JWT versioning (`v: 2`): tokens minted before the payload restructure
+      are rejected with "Session outdated — please log in again"
+- [x] Query-string / body tokens no longer accepted — Authorization header only

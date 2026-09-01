@@ -1,3 +1,4 @@
+const { many } = require('../db/pool');
 const userModel = require('../models/userModel');
 const assignmentModel = require('../models/assignmentModel');
 const villageModel = require('../models/villageModel');
@@ -217,6 +218,35 @@ async function listAllAssignments(req, res) {
     res.json({ success: true, assignments });
 }
 
+/**
+ * GET /api/admin/multi-party-volunteers — flowApplication.md §5: only the
+ * Main Admin may see that one volunteer works for candidates of DIFFERENT
+ * parties (each party's own view never reveals the other party).
+ */
+async function multiPartyVolunteers(req, res) {
+    if (!req.user?.is_super_admin) throw new ForbiddenError('Super-admin only');
+    const rows = await many(
+        `SELECT u.user_id, u.username, u.name, u.phone,
+                array_agg(DISTINCT p.name)  AS parties,
+                array_agg(DISTINCT pc.name) AS candidates,
+                array_agg(DISTINCT c.name)  AS constituencies,
+                COUNT(DISTINCT cand.party_id)::int AS party_count
+           FROM user_candidates uc
+           JOIN user_candidates cand
+             ON cand.user_id = uc.political_candidate_id AND cand.role = 'candidate'
+           JOIN parties p ON p.party_id = cand.party_id
+           JOIN users u  ON u.user_id = uc.user_id
+           JOIN users pc ON pc.user_id = uc.political_candidate_id
+           JOIN candidates c ON c.candidate_id = uc.candidate_id
+          WHERE uc.role = 'volunteer'
+          GROUP BY u.user_id, u.username, u.name, u.phone
+         HAVING COUNT(DISTINCT cand.party_id) > 1
+          ORDER BY party_count DESC, u.name`,
+        []
+    );
+    res.json({ success: true, volunteers: rows });
+}
+
 module.exports = {
     listUsers,
     createUser,
@@ -228,4 +258,5 @@ module.exports = {
     createAssignment,
     deleteAssignment,
     listAllAssignments,
+    multiPartyVolunteers,
 };

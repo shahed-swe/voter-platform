@@ -1,6 +1,7 @@
 import client from './client';
 
 export const listUsers          = (params)          => client.get('/admin/users', { params }).then((r) => r.data);
+export const multiPartyVolunteers = ()              => client.get('/admin/multi-party-volunteers').then((r) => r.data);
 export const createUser         = (body)            => client.post('/admin/users', body).then((r) => r.data);
 export const updateUser         = (id, body)        => client.put(`/admin/users/${id}`, body).then((r) => r.data);
 export const deleteUser         = (id)              => client.delete(`/admin/users/${id}`).then((r) => r.data);
