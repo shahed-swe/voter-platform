@@ -104,6 +104,13 @@ The target spec is [flowApplication.md](flowApplication.md); execution details l
 - [x] Main Admin cross-party timeline: visits matched across parties' separate
       voter rolls by voter number (sos_vid) — best-effort, rows without a
       voter number can't be matched
+- [x] Main Admin cross-party history UI: Admin ▸ Voter History page —
+      persuadable voters across ALL parties (parties named per row) — plus a
+      "সম্পূর্ণ ভিজিট history" button on each Survey Data record; the drawer
+      shows every party's visits and how many times the voter changed their
+      mind. Political Admins keep their party-only view (verified: Tarek sees
+      1 BNP voter / party-scoped timeline, Main Admin sees 4 voters across
+      parties / cross-party timeline)
 - [x] Timeline drawer UI: click any voter name in the party survey /
       persuadable tables → chronological visit list with support level,
       rating, follow-up flag, issues, candidate + canvasser per visit, and a

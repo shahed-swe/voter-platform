@@ -225,18 +225,25 @@ async function crossPartyVoterHistory(voterId) {
 }
 
 /**
- * Persuadable voters (§10): visited MORE than once by the party's campaigns
- * with a CHANGED answer between visits. A voter whose stated preference
- * shifts is persuadable; one whose answer never changes is not.
+ * Persuadable voters (§10): visited MORE than once with a CHANGED answer
+ * between visits. A voter whose stated preference shifts is persuadable; one
+ * whose answer never changes is not.
+ *
+ * partyIds = the Political Admin's party scope; NULL = the Main Admin's
+ * cross-party view (every campaign, with the parties involved per voter).
  */
 async function partyPersuadable(partyIds, { limit = 50, offset = 0 } = {}) {
     const base = `
        FROM canvassing c
        JOIN voters v ON v.voter_id = c.voter_id
-      WHERE EXISTS (
+       LEFT JOIN user_candidates ucx
+         ON ucx.user_id = c.political_candidate_id AND ucx.role = 'candidate'
+        AND ucx.candidate_id = c.candidate_id
+       LEFT JOIN parties p ON p.party_id = ucx.party_id
+      WHERE ($1::text[] IS NULL OR EXISTS (
             SELECT 1 FROM user_candidates uc
              WHERE uc.user_id = c.political_candidate_id
-               AND uc.role = 'candidate' AND uc.party_id = ANY($1))
+               AND uc.role = 'candidate' AND uc.party_id = ANY($1)))
       GROUP BY c.voter_id, v.name, v.sos_vid, v.ward, v.voter_area_name, c.candidate_id
      HAVING COUNT(*) > 1
         AND (COUNT(DISTINCT c.support_level) > 1 OR COUNT(DISTINCT c.support_rating) > 1)`;
@@ -253,7 +260,8 @@ async function partyPersuadable(partyIds, { limit = 50, offset = 0 } = {}) {
                 MIN(c.canvass_date) AS first_visit,
                 MAX(c.canvass_date) AS last_visit,
                 array_agg(c.support_level ORDER BY c.canvass_date) AS support_journey,
-                array_agg(c.support_rating ORDER BY c.canvass_date) AS rating_journey
+                array_agg(c.support_rating ORDER BY c.canvass_date) AS rating_journey,
+                array_agg(DISTINCT p.name) FILTER (WHERE p.name IS NOT NULL) AS parties
            ${base}
           ORDER BY MAX(c.canvass_date) DESC
           LIMIT $2 OFFSET $3`,

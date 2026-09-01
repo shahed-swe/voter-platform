@@ -23,6 +23,7 @@ const ADMIN_DROPDOWN = [
     { to: '/admin/candidates',              label: 'Constituencies',         icon: 'fa-map-location-dot' },
     { to: '/admin/political-candidates',    label: 'Candidates',             icon: 'fa-user-tie' },
     { to: '/admin/multi-party-volunteers',  label: 'Multi-party Volunteers', icon: 'fa-people-arrows' },
+    { to: '/admin/voter-history',           label: 'Voter History',          icon: 'fa-clock-rotate-left' },
     { to: '/admin/import',                  label: 'Import Data',            icon: 'fa-database' },
 ];
 

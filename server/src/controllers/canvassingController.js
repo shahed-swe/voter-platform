@@ -147,11 +147,15 @@ async function voterHistory(req, res) {
 
 /**
  * GET /api/canvassing/party-persuadable
- * §10: voters visited more than once whose answer CHANGED between visits —
- * the persuadable ones the Political Admin should study.
+ * §10: voters visited more than once whose answer CHANGED between visits.
+ * Political Admin: his own party only. Main Admin: cross-party by default
+ * (all campaigns, parties named per voter), or one party via ?party_id.
  */
 async function partyPersuadable(req, res) {
-    const out = await canvassingModel.partyPersuadable(partyScope(req), {
+    const partyIds = (req.user?.is_super_admin && !req.query.party_id)
+        ? null // cross-party
+        : partyScope(req);
+    const out = await canvassingModel.partyPersuadable(partyIds, {
         limit: Math.min(parseInt(req.query.limit || 50, 10) || 50, 500),
         offset: parseInt(req.query.offset || 0, 10) || 0,
     });

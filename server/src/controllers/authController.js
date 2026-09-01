@@ -22,7 +22,15 @@ async function buildTokenPayload(user, { forceCandidate, forcePoliticalCandidate
     // A volunteer may hold several grants for the SAME constituency under
     // different political candidates. The active grant is therefore identified by
     // (constituency, political_candidate) — not constituency alone.
-    const activeCandidate = forceCandidate || grants[0]?.candidate_id || null;
+    let activeCandidate = forceCandidate || grants[0]?.candidate_id || null;
+    // Super admins usually hold NO constituency grants (their power is the
+    // flag, not a grant) — without a default the data pages all 403 until
+    // they use the switcher. Activate the first constituency; the header
+    // switcher moves them anywhere else.
+    if (!activeCandidate && isSuper) {
+        const all = await candidateModel.listActive();
+        activeCandidate = all[0]?.candidate_id || null;
+    }
     const inCandidate = grants.filter((g) => g.candidate_id === activeCandidate);
     const activeGrant =
         (forcePoliticalCandidate != null

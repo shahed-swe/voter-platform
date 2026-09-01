@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as canvassingApi from '../api/canvassing.js';
 import { useAuth } from '../auth/AuthContext.jsx';
+import VoterHistoryDrawer from '../components/party/VoterHistoryDrawer.jsx';
 import { SkeletonList, SkeletonStats, Skeleton, ErrorState, EmptyState, Spinner } from '../components/LoadingState.jsx';
 
 const BN = ['০','১','২','৩','৪','৫','৬','৭','৮','৯'];
@@ -53,6 +54,7 @@ export default function SurveyDataPage() {
     const [q, setQ]             = useState('');
     const [expanded, setExpanded] = useState(null);
     const [loading, setLoading] = useState(false);
+    const [history, setHistory] = useState(null); // super-admin: cross-party timeline drawer
 
     const constituencyId = candidate?.candidate_id;
 
@@ -176,12 +178,30 @@ export default function SurveyDataPage() {
                                         <Detail label="Source" value={r.source} />
                                         <Detail label="Canvassed by" value={r.canvasser_name} />
                                         <Detail label="Date" value={fmtDate(r.canvass_date)} />
+                                        {/* §10: only the Main Admin sees the cross-party timeline */}
+                                        {user?.is_super_admin && (
+                                            <button
+                                                className="mt-2 inline-flex items-center gap-2 text-sm text-brand border border-brand/30 rounded-md px-3 py-1.5 hover:bg-brand/5"
+                                                onClick={() => setHistory({ voter_id: r.voter_id, name: r.voter_name })}
+                                            >
+                                                <i className="fas fa-clock-rotate-left" />
+                                                সম্পূর্ণ ভিজিট history (cross-party)
+                                            </button>
+                                        )}
                                     </div>
                                 )}
                             </div>
                         );
                     })}
                 </div>
+            )}
+
+            {history && (
+                <VoterHistoryDrawer
+                    voterId={history.voter_id}
+                    voterName={history.name}
+                    onClose={() => setHistory(null)}
+                />
             )}
         </div>
     );

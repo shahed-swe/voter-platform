@@ -11,6 +11,11 @@ input-dependent or polish:
 - [ ] Per-role permission fine-tuning still to be specified by the product
       owner (announced: "permissions related things which I should provide
       later")
+- [ ] Main Admin "all parties" landing view (§12): the spec has the Main Admin
+      landing on a platform-wide list of parties with drill-in; today they
+      land on the constituency dashboard and reach party data via the Admin
+      tools + party_id parameters on the party endpoints — a dedicated parties
+      overview page is polish still to build
 - [ ] Cross-party voter matching depends on rolls carrying voter numbers
       (sos_vid) — rolls imported without them can't be matched across parties
       (documented caveat, §10)

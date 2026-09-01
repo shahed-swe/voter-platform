@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import * as mgmt from '../../api/management.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import SharedMultiSelect from '../../components/MultiSelect.jsx';
+import PasswordInput from '../../components/PasswordInput.jsx';
 import { SkeletonList, Skeleton, ErrorState, EmptyState, Spinner } from '../../components/LoadingState.jsx';
 
 const INPUT = 'w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand focus:border-brand';
@@ -220,7 +221,7 @@ function CreateUserModal({ ctx, onClose, onCreated }) {
                             </div>
                             <div>
                                 <label className="block text-xs font-medium text-gray-600 mb-1">Password *</label>
-                                <input className={INPUT} required type="password" value={form.password} onChange={set('password')} />
+                                <PasswordInput className={INPUT} required value={form.password} onChange={set('password')} autoComplete="new-password" />
                             </div>
                         </div>
                     )}
@@ -425,7 +426,7 @@ function EditUserModal({ user: u, onClose, onSaved }) {
                         </div>
                         <div>
                             <label className="block text-xs font-medium text-gray-600 mb-1">নতুন Password (ফাঁকা = অপরিবর্তিত)</label>
-                            <input className={INPUT} type="password" value={form.password} onChange={set('password')} autoComplete="new-password" />
+                            <PasswordInput className={INPUT} value={form.password} onChange={set('password')} autoComplete="new-password" />
                         </div>
                     </div>
 
@@ -450,28 +451,39 @@ function EditUserModal({ user: u, onClose, onSaved }) {
 }
 
 // ── Hierarchy grouping ────────────────────────────────────────────────────────
-// The flat grant list becomes campaign trees: one group per candidate, and
-// inside it Candidate → Campaign Admins → Sub-admins (each with the volunteers
-// THEY assigned, via granted_by) → any remaining volunteers. Party-level rows
-// (Political Admins / Donors) and legacy rows without a campaign get their own
-// sections. A volunteer serving two candidates appears once under EACH.
+// The flat grant list becomes a PARTY → CAMPAIGN → team tree:
+//   party section (its Political Admins / Donors, then its campaigns)
+//     campaign card (headed by the candidate)
+//       Campaign Admins → Sub-admins (each with the volunteers THEY assigned,
+//       via granted_by) → remaining volunteers.
+// Campaigns whose party is unknown to the caller (e.g. a campaign admin who
+// can't see the candidate row) render as top-level cards; rows without any
+// campaign get their own section. A volunteer serving two candidates appears
+// once under EACH campaign.
 function buildHierarchy(users) {
-    const partyRows  = users.filter((u) => u.party_id && !u.candidate_id);
-    const campaignRows = users.filter((u) => !(u.party_id && !u.candidate_id));
+    const partyLevelRows = users.filter((u) => u.party_id && !u.candidate_id);
+    const campaignRows   = users.filter((u) => !(u.party_id && !u.candidate_id));
 
-    const groups = new Map(); // pcId → { candidate, admins, subs, volsBySub, looseVols, name, constituency }
+    const groups = new Map(); // pcId → campaign tree
     const orphans = [];
     for (const u of campaignRows) {
         const pcId = u.political_candidate_id ? String(u.political_candidate_id) : null;
         if (!pcId) { orphans.push(u); continue; }
         if (!groups.has(pcId)) {
-            groups.set(pcId, { candidate: null, admins: [], subs: [], vols: [], name: null, constituency: null });
+            groups.set(pcId, {
+                pcId, candidate: null, admins: [], subs: [], vols: [],
+                name: null, constituency: null, partyId: null, partyName: null,
+            });
         }
         const g = groups.get(pcId);
         g.name ||= u.political_candidate_name;
         g.constituency ||= u.constituency_name;
-        if (u.role === 'candidate' && String(u.user_id) === pcId) { g.candidate = u; g.name = u.name; }
-        else if (u.role === 'admin') g.admins.push(u);
+        if (u.role === 'candidate' && String(u.user_id) === pcId) {
+            g.candidate = u;
+            g.name = u.name;
+            g.partyId = u.party_id || null;
+            g.partyName = u.party_name || null;
+        } else if (u.role === 'admin') g.admins.push(u);
         else if (u.role === 'sub_admin') g.subs.push(u);
         else g.vols.push(u);
     }
@@ -488,8 +500,25 @@ function buildHierarchy(users) {
         }
         g.count = (g.candidate ? 1 : 0) + g.admins.length + g.subs.length + g.vols.length;
     }
-    const ordered = [...groups.entries()].sort((a, b) => (a[1].name || '').localeCompare(b[1].name || ''));
-    return { partyRows, groups: ordered, orphans };
+    const allCampaigns = [...groups.values()].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+    // Bucket by party.
+    const parties = new Map();
+    const ensureParty = (id, name) => {
+        if (!parties.has(id)) parties.set(id, { id, name: name || id, partyRows: [], campaigns: [] });
+        return parties.get(id);
+    };
+    for (const u of partyLevelRows) ensureParty(u.party_id, u.party_name).partyRows.push(u);
+    const looseCampaigns = [];
+    for (const g of allCampaigns) {
+        if (g.partyId) ensureParty(g.partyId, g.partyName).campaigns.push(g);
+        else looseCampaigns.push(g);
+    }
+    const partyList = [...parties.values()].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    for (const p of partyList) {
+        p.count = p.partyRows.length + p.campaigns.reduce((n, g) => n + g.count, 0);
+    }
+    return { parties: partyList, looseCampaigns, orphans };
 }
 
 function UserRow({ u, depth = 0, note, onView, onEdit, onDelete }) {
@@ -539,6 +568,89 @@ function UserRow({ u, depth = 0, note, onView, onEdit, onDelete }) {
     );
 }
 
+const ACTION_BTNS = [
+    { icon: 'fa-eye',   cls: 'border-gray-200 text-gray-600 hover:bg-gray-50', title: 'View details', key: 'onView' },
+    { icon: 'fa-pen',   cls: 'border-brand/30 text-brand hover:bg-brand/5',    title: 'Edit',         key: 'onEdit' },
+    { icon: 'fa-trash', cls: 'border-red-200 text-red-600 hover:bg-red-50',    title: 'Delete',       key: 'onDelete' },
+];
+
+function RowActions({ u, actions }) {
+    return ACTION_BTNS.map((b) => (
+        <button
+            key={b.icon}
+            className={`text-xs border px-2 py-1.5 rounded-md flex-shrink-0 ${b.cls}`}
+            onClick={() => actions[b.key](u)}
+            title={b.title}
+        >
+            <i className={`fas ${b.icon}`} />
+        </button>
+    ));
+}
+
+/**
+ * One candidate's campaign as a collapsible card. The HEADER is the candidate
+ * (with their actions) — no duplicate row inside; the body is the team tree.
+ */
+function CampaignCard({ g, expanded, onToggle, actions }) {
+    const key = (u) => `${u.user_id}-${u.candidate_id || u.party_id}-${u.political_candidate_id || ''}-${u.role}`;
+    const bits = [
+        g.admins.length && `${g.admins.length} admin`,
+        g.subs.length && `${g.subs.length} sub-admin`,
+        g.vols.length && `${g.vols.length} volunteer`,
+    ].filter(Boolean).join(' · ');
+    const teamCount = g.admins.length + g.subs.length + g.vols.length;
+
+    return (
+        <div className="border border-gray-200 rounded-lg overflow-hidden bg-white">
+            <div
+                className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-purple-50/40 transition-colors ${expanded && teamCount ? 'border-b border-gray-100' : ''}`}
+                onClick={onToggle}
+                role="button"
+                aria-expanded={expanded}
+            >
+                <i className={`fas fa-chevron-${expanded ? 'down' : 'right'} text-gray-300 text-xs w-3 flex-shrink-0`} />
+                <div className="h-9 w-9 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center font-semibold flex-shrink-0">
+                    {(g.name || '?').charAt(0)}
+                </div>
+                <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium text-gray-900">{g.name || 'Campaign'}</span>
+                        <span className="text-[11px] px-2 py-0.5 rounded-full font-medium bg-purple-100 text-purple-700">Candidate</span>
+                        {g.constituency && <span className="text-xs text-gray-400">{g.constituency}</span>}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-0.5">
+                        {g.candidate ? `@${g.candidate.username} · ` : ''}
+                        {teamCount ? `টিম: ${bits}` : 'এখনো টিম নেই'}
+                    </div>
+                </div>
+                {g.candidate && (
+                    <div className="flex gap-2 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                        <RowActions u={g.candidate} actions={actions} />
+                    </div>
+                )}
+            </div>
+            {expanded && teamCount > 0 && (
+                <div className="divide-y divide-gray-100">
+                    {g.admins.map((a) => <UserRow key={key(a)} u={a} depth={1} {...actions} />)}
+                    {g.subs.map((s) => (
+                        <div key={key(s)} className="divide-y divide-gray-50">
+                            <UserRow u={s} depth={1} {...actions} />
+                            {(g.volsBySub[String(s.user_id)] || []).map((v) => (
+                                <UserRow key={key(v)} u={v} depth={2} note={`যোগ করেছেন ${s.name}`} {...actions} />
+                            ))}
+                        </div>
+                    ))}
+                    {g.looseVols.map((v) => (
+                        <UserRow key={key(v)} u={v} depth={1}
+                                 note={v.granted_by_name ? `যোগ করেছেন ${v.granted_by_name}` : null}
+                                 {...actions} />
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function ManagementPage() {
     const { user } = useAuth();
@@ -548,6 +660,8 @@ export default function ManagementPage() {
     const [showCreate, setShowCreate] = useState(false);
     const [viewTarget, setViewTarget] = useState(null); // user row for the view modal
     const [editTarget, setEditTarget] = useState(null); // user row for the edit modal
+    const [q, setQ] = useState('');                     // name/username filter
+    const [openCampaigns, setOpenCampaigns] = useState(null); // Set of pcIds; null = defaults
 
     const reload = useCallback(() => {
         Promise.all([mgmt.context(), mgmt.listUsers()])
@@ -596,57 +710,84 @@ export default function ManagementPage() {
             {users.length === 0 ? (
                 <EmptyState icon="fa-users" label="এখনো কোনো user নেই। উপরের বাটন থেকে যোগ করুন।" />
             ) : (() => {
-                const { partyRows, groups, orphans } = buildHierarchy(users);
+                // Search narrows the tree to matching people (groups shrink with it).
+                const needle = q.trim().toLowerCase();
+                const visible = needle
+                    ? users.filter((u) =>
+                        (u.name || '').toLowerCase().includes(needle)
+                        || (u.username || '').toLowerCase().includes(needle))
+                    : users;
+                const { parties, looseCampaigns, orphans } = buildHierarchy(visible);
                 const rowActions = { onView: setViewTarget, onEdit: setEditTarget, onDelete: handleDelete };
                 const key = (u) => `${u.user_id}-${u.candidate_id || u.party_id}-${u.political_candidate_id || ''}-${u.role}`;
+
+                const totalCampaigns = parties.reduce((n, p) => n + p.campaigns.length, 0) + looseCampaigns.length;
+                // Few campaigns → all open; many → collapsed until clicked. A
+                // search always opens everything it matched.
+                const isOpen = (pcId) => !!needle
+                    || (openCampaigns ? openCampaigns.has(pcId) : totalCampaigns <= 2);
+                const toggle = (pcId) => setOpenCampaigns((prev) => {
+                    const next = new Set(prev
+                        ?? (totalCampaigns <= 2
+                            ? [...parties.flatMap((p) => p.campaigns), ...looseCampaigns].map((g) => g.pcId)
+                            : []));
+                    if (next.has(pcId)) next.delete(pcId); else next.add(pcId);
+                    return next;
+                });
+                const campaignCard = (g) => (
+                    <CampaignCard key={g.pcId} g={g} expanded={isOpen(g.pcId)}
+                                  onToggle={() => toggle(g.pcId)} actions={rowActions} />
+                );
+
                 return (
                     <div className="space-y-4">
-                        {partyRows.length > 0 && (
-                            <section className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                                <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100">
-                                    <h2 className="text-sm font-semibold text-gray-800">
-                                        <i className="fas fa-flag text-rose-500 mr-2" />দল পর্যায় (Political Admin / Donor)
-                                    </h2>
-                                </div>
-                                <div className="divide-y divide-gray-100">
-                                    {partyRows.map((u) => <UserRow key={key(u)} u={u} {...rowActions} />)}
-                                </div>
-                            </section>
+                        {/* Find anyone fast — the tree filters as you type */}
+                        <div className="flex flex-wrap items-center gap-3">
+                            <div className="relative flex-1 min-w-56 max-w-xs">
+                                <i className="fas fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-gray-300 text-xs" />
+                                <input
+                                    className="w-full border border-gray-300 rounded-md pl-8 pr-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand focus:border-brand"
+                                    placeholder="নাম বা username খুঁজুন…"
+                                    value={q}
+                                    onChange={(e) => setQ(e.target.value)}
+                                />
+                            </div>
+                            <span className="text-sm text-gray-500 bn">
+                                {needle ? `${visible.length} জন পাওয়া গেছে` : `মোট ${users.length} জন`}
+                            </span>
+                        </div>
+
+                        {needle && visible.length === 0 && (
+                            <EmptyState icon="fa-magnifying-glass" label="এই খোঁজে কেউ পাওয়া যায়নি" />
                         )}
 
-                        {groups.map(([pcId, g]) => (
-                            <section key={pcId} className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                                {/* Which candidate's campaign this whole tree belongs to */}
-                                <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center justify-between gap-3">
-                                    <h2 className="text-sm font-semibold text-gray-800 truncate">
-                                        <i className="fas fa-user-tie text-purple-500 mr-2" />
-                                        {g.name || 'Campaign'}
-                                        {g.constituency && <span className="text-gray-400 font-normal"> · {g.constituency}</span>}
+                        {parties.map((party) => (
+                            <section key={party.id} className="border border-gray-200 rounded-xl overflow-hidden">
+                                {/* Party header — the top of the whole tree */}
+                                <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between gap-3">
+                                    <h2 className="font-semibold text-gray-900 truncate">
+                                        <i className="fas fa-flag text-rose-500 mr-2" />{party.name}
                                     </h2>
-                                    <span className="text-[11px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full whitespace-nowrap bn">
-                                        {g.count} জন
+                                    <span className="text-[11px] bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full whitespace-nowrap bn">
+                                        {party.count} জন
                                     </span>
                                 </div>
-                                <div className="divide-y divide-gray-100">
-                                    {g.candidate && <UserRow key={key(g.candidate)} u={g.candidate} {...rowActions} />}
-                                    {g.admins.map((a) => <UserRow key={key(a)} u={a} depth={1} {...rowActions} />)}
-                                    {g.subs.map((s) => (
-                                        <div key={key(s)} className="divide-y divide-gray-50">
-                                            <UserRow u={s} depth={1} {...rowActions} />
-                                            {(g.volsBySub[String(s.user_id)] || []).map((v) => (
-                                                <UserRow key={key(v)} u={v} depth={2}
-                                                         note={`যোগ করেছেন ${s.name}`} {...rowActions} />
-                                            ))}
+                                <div className="p-3 space-y-3 bg-gray-50/50">
+                                    {party.partyRows.length > 0 && (
+                                        <div className="border border-gray-200 rounded-lg bg-white divide-y divide-gray-100">
+                                            {party.partyRows.map((u) => <UserRow key={key(u)} u={u} {...rowActions} />)}
                                         </div>
-                                    ))}
-                                    {g.looseVols.map((v) => (
-                                        <UserRow key={key(v)} u={v} depth={1}
-                                                 note={v.granted_by_name ? `যোগ করেছেন ${v.granted_by_name}` : null}
-                                                 {...rowActions} />
-                                    ))}
+                                    )}
+                                    {party.campaigns.map(campaignCard)}
                                 </div>
                             </section>
                         ))}
+
+                        {looseCampaigns.length > 0 && (
+                            <div className="space-y-3">
+                                {looseCampaigns.map(campaignCard)}
+                            </div>
+                        )}
 
                         {orphans.length > 0 && (
                             <section className="bg-white border border-gray-200 rounded-lg overflow-hidden">

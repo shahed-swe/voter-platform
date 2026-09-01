@@ -276,7 +276,8 @@ async function listUsers(req, res) {
         `SELECT DISTINCT ON (u.user_id, uc.candidate_id, uc.political_candidate_id)
                 u.user_id, u.username, u.name, u.email, u.phone, u.is_active,
                 uc.candidate_id, uc.role, uc.allowed_wards, uc.allowed_voter_areas,
-                uc.political_candidate_id, uc.party_id, pc.name AS political_candidate_name,
+                uc.political_candidate_id, uc.party_id, pty.name AS party_name,
+                pc.name AS political_candidate_name,
                 uc.granted_by, gb.name AS granted_by_name, gb.role AS granted_by_role,
                 c.name AS constituency_name
            FROM user_candidates uc
@@ -284,6 +285,7 @@ async function listUsers(req, res) {
            JOIN candidates c ON c.candidate_id = uc.candidate_id
            LEFT JOIN users pc ON pc.user_id = uc.political_candidate_id
            LEFT JOIN users gb ON gb.user_id = uc.granted_by
+           LEFT JOIN parties pty ON pty.party_id = uc.party_id
           WHERE ${where.join(' AND ')}
           ORDER BY u.user_id, uc.candidate_id, uc.political_candidate_id, uc.role`,
         params
@@ -470,6 +472,12 @@ async function updateUser(req, res) {
     if (uid !== req.user.user_id && !(await targetInScope(req, uid))) {
         throw new ForbiddenError('User is outside your hierarchy');
     }
+    // Same lock-out risk as delete: deactivating or resetting the Main Admin
+    // from a hijacked/other session would cut off platform access. Only the
+    // Main Admin edits their own account.
+    if (target.is_super_admin && uid !== req.user.user_id) {
+        throw new ForbiddenError('The Main Admin account can only be edited by itself');
+    }
 
     const { name, email, phone, is_active, password } = req.body || {};
     // Only pass provided fields — userModel.update would null out the rest.
@@ -501,6 +509,10 @@ async function removeUser(req, res) {
 
     const target = await userModel.findById(uid);
     if (!target) throw new NotFoundError('User not found');
+    // RANK is role-based and the platform admin's role column is plain 'admin' —
+    // the super flag lives beside it, so it must be checked explicitly or the
+    // Main Admin account is deletable and the whole platform gets locked out.
+    if (target.is_super_admin) throw new ForbiddenError('The Main Admin account cannot be deleted');
     if (RANK[target.role] >= RANK[role]) throw new ForbiddenError('Cannot delete a user at or above your level');
 
     if (req.user.is_super_admin) {

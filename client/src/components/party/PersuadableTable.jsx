@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import * as canvassingApi from '../../api/canvassing.js';
 import VoterHistoryDrawer from './VoterHistoryDrawer.jsx';
 import { SkeletonTable, ErrorState, EmptyState } from '../LoadingState.jsx';
+import { useAuth } from '../../auth/AuthContext.jsx';
 
 const PAGE_SIZE = 50;
 const bn = (n) => Number(n || 0).toLocaleString('bn-BD');
@@ -39,6 +40,7 @@ function Journey({ levels }) {
  * one opens the full timeline.
  */
 export default function PersuadableTable() {
+    const { user } = useAuth();
     const [rows, setRows]   = useState(null);
     const [total, setTotal] = useState(0);
     const [page, setPage]   = useState(0);
@@ -57,6 +59,9 @@ export default function PersuadableTable() {
     if (error) return <ErrorState error={error} />;
 
     const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    // Cross-party rows (Main Admin only) name the parties involved per voter —
+    // a Political Admin's rows are all his own party, so the column is noise.
+    const showParties = !!user?.is_super_admin;
 
     return (
         <div>
@@ -79,6 +84,7 @@ export default function PersuadableTable() {
                             <tr>
                                 <th className="px-3 py-2 text-left">ভোটার</th>
                                 <th className="px-3 py-2 text-left">আসন</th>
+                                {showParties && <th className="px-3 py-2 text-left">দল</th>}
                                 <th className="px-3 py-2 text-center">ভিজিট</th>
                                 <th className="px-3 py-2 text-left">মতের পরিবর্তন</th>
                                 <th className="px-3 py-2 text-left">শেষ ভিজিট</th>
@@ -103,6 +109,17 @@ export default function PersuadableTable() {
                                         </button>
                                     </td>
                                     <td className="px-3 py-2 whitespace-nowrap">{r.constituency_name}</td>
+                                    {showParties && (
+                                        <td className="px-3 py-2">
+                                            {(r.parties || []).length
+                                                ? (r.parties || []).map((p) => (
+                                                    <span key={p} className="text-[11px] bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full mr-1 whitespace-nowrap">
+                                                        {p}
+                                                    </span>
+                                                ))
+                                                : <span className="text-gray-300">—</span>}
+                                        </td>
+                                    )}
                                     <td className="px-3 py-2 text-center bn">{bn(r.visits)}</td>
                                     <td className="px-3 py-2"><Journey levels={r.support_journey} /></td>
                                     <td className="px-3 py-2 whitespace-nowrap text-gray-500">

@@ -22,6 +22,7 @@ import CreateCandidatePage from './pages/admin/CreateCandidatePage.jsx';
 import ImportDataPage from './pages/admin/ImportDataPage.jsx';
 import PoliticalCandidatesPage from './pages/admin/PoliticalCandidatesPage.jsx';
 import MultiPartyVolunteersPage from './pages/admin/MultiPartyVolunteersPage.jsx';
+import MainVoterHistoryPage from './pages/admin/MainVoterHistoryPage.jsx';
 import VolunteerManagementPage from './pages/candidate/VolunteerManagementPage.jsx';
 import ManagementPage from './pages/admin/ManagementPage.jsx';
 import CampaignHomePage from './pages/campaign/CampaignHomePage.jsx';
@@ -147,6 +148,15 @@ export default function App() {
                     element={
                         <ProtectedRoute requireSuperAdmin>
                             <MultiPartyVolunteersPage />
+                        </ProtectedRoute>
+                    }
+                />
+                {/* §10: cross-party voter support history — Main Admin only */}
+                <Route
+                    path="/admin/voter-history"
+                    element={
+                        <ProtectedRoute requireSuperAdmin>
+                            <MainVoterHistoryPage />
                         </ProtectedRoute>
                     }
                 />

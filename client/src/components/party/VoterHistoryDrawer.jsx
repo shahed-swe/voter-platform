@@ -40,9 +40,14 @@ export default function VoterHistoryDrawer({ voterId, voterName, onClose }) {
 
     const visits = data?.visits || [];
     const first = visits[0];
-    const last = visits[visits.length - 1];
-    const changed = visits.length > 1
-        && (first?.support_level !== last?.support_level || first?.support_rating !== last?.support_rating);
+    // How many times the stated preference actually flipped between visits.
+    let changeCount = 0;
+    for (let i = 1; i < visits.length; i++) {
+        if (visits[i].support_level !== visits[i - 1].support_level
+            || visits[i].support_rating !== visits[i - 1].support_rating) changeCount++;
+    }
+    const changed = changeCount > 0;
+    const bn = (n) => Number(n || 0).toLocaleString('bn-BD');
 
     return (
         <div className="fixed inset-0 z-50 flex justify-end">
@@ -82,8 +87,13 @@ export default function VoterHistoryDrawer({ voterId, voterName, onClose }) {
                                         : 'bg-gray-50 border-gray-200 text-gray-600'
                                 }`}>
                                     {changed
-                                        ? <><i className="fas fa-arrows-turn-to-dots mr-1.5" /><span className="bn">{visits.length}টি ভিজিটে উত্তর বদলেছে — persuadable ভোটার</span></>
-                                        : <><i className="fas fa-anchor mr-1.5" /><span className="bn">{visits.length}টি ভিজিটে উত্তর অপরিবর্তিত</span></>}
+                                        ? <><i className="fas fa-arrows-turn-to-dots mr-1.5" /><span className="bn">{bn(visits.length)}টি ভিজিটে {bn(changeCount)} বার মত বদলেছে — persuadable ভোটার</span></>
+                                        : <><i className="fas fa-anchor mr-1.5" /><span className="bn">{bn(visits.length)}টি ভিজিটে উত্তর অপরিবর্তিত</span></>}
+                                    {data.cross_party && (
+                                        <span className="block text-[11px] mt-1 opacity-70">
+                                            <i className="fas fa-globe mr-1" />Cross-party timeline — সব দলের ভিজিট একসাথে
+                                        </span>
+                                    )}
                                 </div>
                             )}
 
