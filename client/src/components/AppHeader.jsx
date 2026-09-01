@@ -33,17 +33,20 @@ const MANAGER_NAV = [
 // Party-level roles hold no constituency grant — the constituency pages would
 // only 403 at them, so they get a minimal nav until their full views land.
 const PARTY_ADMIN_NAV = [
-    { to: '/party',         label: 'Party',   icon: 'fa-flag' },
-    { to: '/party/surveys', label: 'Surveys', icon: 'fa-clipboard-list' },
-    { to: '/management',    label: 'Team',    icon: 'fa-sitemap' },
+    { to: '/party',           label: 'Party',     icon: 'fa-flag' },
+    { to: '/party/surveys',   label: 'Surveys',   icon: 'fa-clipboard-list' },
+    { to: '/party/donations', label: 'Donations', icon: 'fa-hand-holding-heart' },
+    { to: '/management',      label: 'Team',      icon: 'fa-sitemap' },
 ];
 const DONOR_NAV = [
     { to: '/donor', label: 'My Profile', icon: 'fa-hand-holding-heart' },
 ];
 // Volunteers only canvass — survey review/analytics belong to the levels above.
+// Donations is their own record: confirming money they received (§9).
 const VOLUNTEER_NAV = [
     { to: '/dashboard',  label: 'Dashboard',  icon: 'fa-map' },
     { to: '/canvassing', label: 'Canvassing', icon: 'fa-clipboard-check' },
+    { to: '/donations',  label: 'অনুদান',      icon: 'fa-hand-holding-heart' },
 ];
 
 function AdminDropdown() {

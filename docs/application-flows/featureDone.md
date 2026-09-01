@@ -75,3 +75,23 @@ The target spec is [flowApplication.md](flowApplication.md); execution details l
       assignment), area options, geo options, area stats — array-safe scope handling
 - [x] Client query cache cleared on login/logout, so one user's broader cached data
       can never leak into the next user's session in the same tab
+
+## Donations / Donor module (§9) — added 2026-09-01
+
+- [x] `donations` table (migration 025) — party-anchored, recorded → confirmed
+- [x] Donor's volunteer finder: only volunteers of THEIR party, searchable by
+      name / ward / area — returns name + working area + campaign only
+      (no username, phone, or any canvassing data)
+- [x] Donor records a donation (amount + note) to a chosen volunteer; the
+      volunteer must verifiably belong to the donor's party
+- [x] Volunteer's independent confirmation ("টাকা পেয়েছি") — only the addressed
+      volunteer can confirm, only once; both sides recorded separately
+- [x] Donor profile (`/donor`): totals (count, ৳ given, ৳ confirmed, pending)
+      + their own donation list — donors see nothing else
+- [x] Volunteer donations page (`/donations`): received list, pending-first,
+      one-click confirm
+- [x] Political Admin party ledger (`/party/donations`): every donor →
+      volunteer donation in HIS party with totals and status
+- [x] Isolation verified live: cross-party donation attempts 404, wrong
+      volunteer cannot confirm, donor cannot read the ledger, volunteer cannot
+      donate

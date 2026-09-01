@@ -16,6 +16,10 @@ router.use('/people', require('./peopleRoutes'));
 // Unified hierarchy management (candidate → admin → sub-admin → volunteer). #12
 router.use('/management', require('./managementRoutes'));
 
+// Donations (§9): donor ↔ volunteer money records + the party ledger.
+// Party-scoped, not constituency-scoped, so it sits before the scope middleware.
+router.use('/donations', require('./donationRoutes'));
+
 // Everything else requires authentication AND a candidate scope (set on req.candidateId).
 router.use(verifyToken, scopeToCandidate);
 

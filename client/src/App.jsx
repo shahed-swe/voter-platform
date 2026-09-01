@@ -6,7 +6,9 @@ import { roleHome } from './auth/roleHome.js';
 import PartyHomePage from './pages/party/PartyHomePage.jsx';
 import PartyCandidatePage from './pages/party/PartyCandidatePage.jsx';
 import PartySurveysPage from './pages/party/PartySurveysPage.jsx';
+import PartyDonationsPage from './pages/party/PartyDonationsPage.jsx';
 import DonorProfilePage from './pages/donor/DonorProfilePage.jsx';
+import VolunteerDonationsPage from './pages/volunteer/VolunteerDonationsPage.jsx';
 
 import LoginPage from './pages/LoginPage.jsx';
 import DashboardPage from './pages/DashboardPage.jsx';
@@ -47,7 +49,17 @@ export default function App() {
                 <Route path="/party" element={<PartyHomePage />} />
                 <Route path="/party/candidates/:userId" element={<PartyCandidatePage />} />
                 <Route path="/party/surveys" element={<PartySurveysPage />} />
+                <Route path="/party/donations" element={<PartyDonationsPage />} />
                 <Route path="/donor" element={<DonorProfilePage />} />
+                {/* Volunteers confirm receipt of donations addressed to them (§9) */}
+                <Route
+                    path="/donations"
+                    element={
+                        <ProtectedRoute roles={['volunteer']}>
+                            <VolunteerDonationsPage />
+                        </ProtectedRoute>
+                    }
+                />
                 <Route path="/dashboard"        element={<DashboardPage />} />
                 <Route path="/canvassing"       element={<CanvassingPage />} />
                 {/* Survey review / analytics are for the hierarchy ABOVE the

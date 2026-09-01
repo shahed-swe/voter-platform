@@ -5,14 +5,6 @@ the spec, [flowApplication.md](flowApplication.md); implementation details for e
 item live in [plan.md](plan.md) (Steps 5–7 + leftovers). What's already finished:
 [featureDone.md](featureDone.md).
 
-## Donations / Donor module (§9)
-
-- [ ] Donation recording — the donor profile page (`/donor`) is currently a stub
-      with zeroed counters
-- [ ] Donor creates/lists their own donations; volunteer confirmation flow
-- [ ] Party-level donation ledger for the Political Admin
-- [ ] Donor ↔ volunteer connections (donor's volunteer-finder: name + area only)
-
 ## Voter support history (§10)
 
 - [ ] Full cross-campaign voter timeline endpoint + UI — restricted to

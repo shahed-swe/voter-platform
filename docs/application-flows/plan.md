@@ -332,17 +332,25 @@ correct nav, correctly narrowed data (this last check is the user's).
 - [ ] `GET /api/admin/multi-party-volunteers` (grants spanning >1 party_id) +
       main-admin page (§5).
 
-## Step 6 — Donations (§9)
-- [ ] `024_donations.sql`: `donations(party_id, donor_user_id,
-      volunteer_user_id, candidate_id NULL, amount, note,
-      status CHECK('recorded','confirmed') DEFAULT 'recorded',
-      recorded_at, confirmed_at)`.
-- [ ] Server: donor create + list own; volunteer list own + confirm
-      (independent confirmation); tenant/main party ledger; donor
-      volunteer-finder returning name + area ONLY (§13).
-- [ ] Client: real DonorProfilePage (totals, list, give-donation flow via the
-      volunteer finder); volunteer confirm card; ledger in PartyDashboard;
-      candidate donation-record form (§12).
+## Step 6 — Donations (§9) — DONE 2026-09-01
+- [x] `025_donations.sql` (applied): `donations(party_id, donor_user_id,
+      volunteer_user_id, political_candidate_id, candidate_id, amount, note,
+      status recorded→confirmed, recorded_at, confirmed_at)` + indexes.
+- [x] Server (`donationModel/Controller/Routes`, mounted pre-scope at
+      `/api/donations`): donor create + list own + totals; volunteer
+      received-list + independent confirm (WHERE clause is the authz);
+      tenant/main party ledger with totals; donor volunteer-finder —
+      party-scoped, name + area + campaign ONLY (§13 privacy).
+- [x] Client: real `/donor` profile (totals cards, list, new-donation modal
+      with debounced volunteer finder); volunteer `/donations` page with
+      confirm buttons + "অনুদান" nav item; Political Admin `/party/donations`
+      ledger + "Donations" nav item.
+- [x] Verified live end-to-end (bnp_donor1 → Nuru ৳5000 recorded → Nuru
+      confirmed → Tarek's ledger shows confirmed): cross-party donate 404,
+      wrong-volunteer confirm 404, double-confirm 404, donor↛ledger 403,
+      volunteer↛donate 403.
+      NOTE: the candidate donation-record form idea (§12) was intentionally
+      dropped — the spec's flow is donor→volunteer only.
 
 ## Step 7 — Candidate selection & data handover (§8)
 - [ ] `025_candidate_selection.sql`: `candidate_selections(party_id,
