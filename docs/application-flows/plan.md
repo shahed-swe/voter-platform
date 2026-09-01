@@ -55,8 +55,27 @@ only the surveys collected FOR them):
   cross-hierarchy edit/delete 403; delete by campaign 1 left the campaign-2
   grant + login intact. Test canvasses removed afterwards.
 
-  Remaining from Steps 1–4: the ward/analytics scoping sweep on voter/geo
-  endpoints, JWT versioning, candidate/sub-admin dashboards.
+**Progress update (2026-08-31, voter-area enforcement):** a volunteer assigned
+specific voter areas could still browse the whole ward (reported with nuru123).
+Two causes, both fixed:
+- Server: `/voters/filtered` compared `allowed_wards.includes(scope.ward)`
+  where scope.ward is an ARRAY from the multi-select nav — always false → 403
+  for volunteers; and restrictions were applied pre-merge so filter keys could
+  override them. Now: array-safe narrowing applied to the MERGED filters, and
+  assignment (wards + voter areas) enforced in SQL across ALL direct voter
+  endpoints — search, by-village, by-voter-area(s), voter detail (404 outside
+  assignment), area-options, geo-options, areas list, area stats.
+- Client: logout/login never cleared the TanStack Query cache, and keys are
+  per-constituency, not per-user — logging in as a volunteer after a broader
+  user in the same tab served the previous user's cached area options. The
+  QueryClient now lives in `client/src/queryClient.js` and is `.clear()`ed on
+  both login and logout.
+  Verified live with nuru123's real grant: geo/area options return only the 2
+  assigned areas, filtered/search/detail return only assigned-area voters,
+  out-of-assignment requests 403/404, unrestricted users unaffected.
+
+  Remaining from Steps 1–4: analytics-geo scoping sweep, JWT versioning,
+  candidate/sub-admin dashboards.
 
 **Ground rules for the implementer**
 - The database is AHEAD of the code: migrations `022_parties.sql` and

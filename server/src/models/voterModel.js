@@ -18,28 +18,42 @@ async function findBySosVid(candidateId, sosVid) {
     );
 }
 
-async function search(candidateId, query, { limit = 50 } = {}) {
+async function search(candidateId, query, { limit = 50, wards = null, areas = null } = {}) {
+    // wards/areas: volunteer assignment restriction — must be part of the SQL,
+    // not a post-filter, or out-of-scope rows eat the LIMIT before filtering.
+    const params = [candidateId, `%${query}%`];
+    const where = [
+        'candidate_id = $1',
+        '(name ILIKE $2 OR sos_vid ILIKE $2 OR father_husband ILIKE $2)',
+    ];
+    if (wards?.length) { params.push(wards); where.push(`ward = ANY($${params.length})`); }
+    if (areas?.length) { params.push(areas); where.push(`voter_area_name = ANY($${params.length})`); }
+    params.push(limit);
     return many(
         `SELECT voter_id, sos_vid, name, father_husband, age, gender, ward,
                 voter_area_name, village_csv, village_id, status
            FROM voters
-          WHERE candidate_id = $1
-            AND (name ILIKE $2 OR sos_vid ILIKE $2 OR father_husband ILIKE $2)
+          WHERE ${where.join(' AND ')}
           ORDER BY name
-          LIMIT $3`,
-        [candidateId, `%${query}%`, limit]
+          LIMIT $${params.length}`,
+        params
     );
 }
 
-async function byVillage(candidateId, villageId, { limit = 1000, offset = 0 } = {}) {
+async function byVillage(candidateId, villageId, { limit = 1000, offset = 0, wards = null, areas = null } = {}) {
+    const params = [candidateId, villageId];
+    const where = ['candidate_id = $1', 'village_id = $2'];
+    if (wards?.length) { params.push(wards); where.push(`ward = ANY($${params.length})`); }
+    if (areas?.length) { params.push(areas); where.push(`voter_area_name = ANY($${params.length})`); }
+    params.push(limit, offset);
     return many(
         `SELECT voter_id, sos_vid, name, father_husband, mother, age, gender, ward,
                 voter_area_name, status, address
            FROM voters
-          WHERE candidate_id = $1 AND village_id = $2
+          WHERE ${where.join(' AND ')}
           ORDER BY name
-          LIMIT $3 OFFSET $4`,
-        [candidateId, villageId, limit, offset]
+          LIMIT $${params.length - 1} OFFSET $${params.length}`,
+        params
     );
 }
 
@@ -413,6 +427,7 @@ module.exports = {
     byVoterAreas,
     findByFilters,
     listVoterAreas,
+    listVoterAreasByScope,
     voterAreaStats,
     aggregatedStatistics,
     attributeKeys,
