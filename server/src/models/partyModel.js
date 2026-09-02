@@ -59,7 +59,7 @@ async function revokePartyRole(userId, partyId, role) {
 }
 
 /** Users holding party-level grants, for the management list. */
-async function listPartyUsers({ roles = null, partyIds = null } = {}) {
+async function listPartyUsers({ roles = null, partyIds = null, grantedBy = null } = {}) {
     const params = [];
     const where = [`u.is_active = true`];
     if (roles?.length) {
@@ -70,12 +70,18 @@ async function listPartyUsers({ roles = null, partyIds = null } = {}) {
         params.push(partyIds);
         where.push(`up.party_id = ANY($${params.length})`);
     }
+    if (grantedBy != null) {
+        params.push(grantedBy);
+        where.push(`up.granted_by = $${params.length}`);
+    }
     return many(
         `SELECT u.user_id, u.username, u.name, u.email, u.phone, u.is_active,
-                up.role, up.party_id, p.name AS party_name
+                up.role, up.party_id, p.name AS party_name,
+                up.granted_by, gb.name AS granted_by_name, gb.role AS granted_by_role
            FROM user_parties up
            JOIN users u   ON u.user_id  = up.user_id
            JOIN parties p ON p.party_id = up.party_id
+           LEFT JOIN users gb ON gb.user_id = up.granted_by
           WHERE ${where.join(' AND ')}
           ORDER BY up.role, u.name`,
         params

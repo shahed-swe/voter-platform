@@ -92,6 +92,10 @@ The target spec is [flowApplication.md](flowApplication.md); execution details l
       one-click confirm
 - [x] Political Admin party ledger (`/party/donations`): every donor →
       volunteer donation in HIS party with totals and status
+- [x] Candidates can also add Donors (2026-09-02): the donor is auto-anchored
+      to the candidate's own party; the candidate sees/edits/removes only the
+      donors HE added, the Political Admin sees the party's full donor list,
+      other candidates see nothing; donor abilities unchanged
 - [x] Isolation verified live: cross-party donation attempts 404, wrong
       volunteer cannot confirm, donor cannot read the ledger, volunteer cannot
       donate

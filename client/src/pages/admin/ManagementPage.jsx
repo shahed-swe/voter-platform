@@ -550,20 +550,24 @@ function UserRow({ u, depth = 0, note, onView, onEdit, onDelete }) {
             >
                 <i className="fas fa-eye" />
             </button>
-            <button
-                className="text-xs border border-brand/30 text-brand px-2 py-1.5 rounded-md hover:bg-brand/5 flex-shrink-0"
-                onClick={() => onEdit(u)}
-                title="Edit"
-            >
-                <i className="fas fa-pen" />
-            </button>
-            <button
-                className="text-xs border border-red-200 text-red-600 px-2 py-1.5 rounded-md hover:bg-red-50 flex-shrink-0"
-                onClick={() => onDelete(u)}
-                title="Delete"
-            >
-                <i className="fas fa-trash" />
-            </button>
+            {onEdit && (
+                <button
+                    className="text-xs border border-brand/30 text-brand px-2 py-1.5 rounded-md hover:bg-brand/5 flex-shrink-0"
+                    onClick={() => onEdit(u)}
+                    title="Edit"
+                >
+                    <i className="fas fa-pen" />
+                </button>
+            )}
+            {onDelete && (
+                <button
+                    className="text-xs border border-red-200 text-red-600 px-2 py-1.5 rounded-md hover:bg-red-50 flex-shrink-0"
+                    onClick={() => onDelete(u)}
+                    title="Delete"
+                >
+                    <i className="fas fa-trash" />
+                </button>
+            )}
         </div>
     );
 }
@@ -775,7 +779,19 @@ export default function ManagementPage() {
                                 <div className="p-3 space-y-3 bg-gray-50/50">
                                     {party.partyRows.length > 0 && (
                                         <div className="border border-gray-200 rounded-lg bg-white divide-y divide-gray-100">
-                                            {party.partyRows.map((u) => <UserRow key={key(u)} u={u} {...rowActions} />)}
+                                            {party.partyRows.map((u) => {
+                                                // A candidate sees ALL of his party's donors but manages
+                                                // only the ones HE added — others are view-only here.
+                                                const viewOnly = user?.role === 'candidate' && !user?.is_super_admin
+                                                    && String(u.granted_by || '') !== String(user?.user_id || '');
+                                                return (
+                                                    <UserRow key={key(u)} u={u}
+                                                             note={u.granted_by_name ? `যোগ করেছেন ${u.granted_by_name}` : null}
+                                                             onView={rowActions.onView}
+                                                             onEdit={viewOnly ? null : rowActions.onEdit}
+                                                             onDelete={viewOnly ? null : rowActions.onDelete} />
+                                                );
+                                            })}
                                         </div>
                                     )}
                                     {party.campaigns.map(campaignCard)}

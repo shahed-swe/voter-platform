@@ -25,7 +25,7 @@ const RANK = { super_admin: 5, tenant_admin: 4, candidate: 3, admin: 2, sub_admi
 const CREATABLE = {
     super_admin:  ['tenant_admin', 'candidate', 'admin', 'sub_admin', 'volunteer', 'donor'],
     tenant_admin: ['candidate', 'donor'],
-    candidate:    ['admin'],
+    candidate:    ['admin', 'donor'],
     admin:        ['sub_admin'],
     sub_admin:    ['volunteer'],
     volunteer:    [],
@@ -54,6 +54,13 @@ async function resolveParty(req, targetRole) {
     if (!req.user?.is_super_admin) {
         const mine = callerPartyIds(req);
         if (mine.length) return mine[0];
+        // A Candidate's party lives on his candidate grant, not user_parties —
+        // his donors are anchored there, never to a party from the request.
+        if (callerRole(req) === 'candidate') {
+            const partyId = await candidatePartyId(req);
+            if (!partyId) throw new ValidationError('Your candidate account has no party yet — ask your Political Admin');
+            return partyId;
+        }
     }
 
     if (partyId) {
@@ -86,6 +93,17 @@ async function resolveParty(req, targetRole) {
 
 function callerRole(req) {
     return req.user?.is_super_admin ? 'super_admin' : (req.user?.role || null);
+}
+
+/** The party a Candidate belongs to — lives on his candidate grant. */
+async function candidatePartyId(req) {
+    const row = await one(
+        `SELECT party_id FROM user_candidates
+          WHERE user_id = $1 AND role = 'candidate' AND party_id IS NOT NULL
+          LIMIT 1`,
+        [req.user.user_id]
+    );
+    return row?.party_id || null;
 }
 
 /** The campaign (political candidate) the caller belongs to. Null for super-admin. */
@@ -149,7 +167,19 @@ async function targetInScope(req, targetUserId) {
           WHERE user_id = $1 AND political_candidate_id = $2 LIMIT 1`,
         [targetUserId, cid]
     );
-    return !!row;
+    if (row) return true;
+
+    // A Candidate also scopes the donors HE added (party-level grant, no
+    // campaign row) — but never the Political Admin's or another candidate's.
+    if (role === 'candidate') {
+        const donor = await one(
+            `SELECT 1 AS ok FROM user_parties
+              WHERE user_id = $1 AND granted_by = $2 AND role = 'donor' LIMIT 1`,
+            [targetUserId, req.user.user_id]
+        );
+        return !!donor;
+    }
+    return false;
 }
 
 async function distinctWards(candidateId, limitToWards) {
@@ -301,6 +331,16 @@ async function listUsers(req, res) {
             partyIds: role === 'tenant_admin' ? callerPartyIds(req) : null,
         });
         rows.push(...partyRows);
+    } else if (role === 'candidate') {
+        // A Candidate sees his party's full donor list (donors are party-level
+        // and fund any of the party's volunteers) — but may edit/remove only
+        // the ones HE added; the rest stay the Political Admin's to manage.
+        const partyId = await candidatePartyId(req);
+        if (partyId) {
+            rows.push(...await partyModel.listPartyUsers({
+                roles: ['donor'], partyIds: [partyId],
+            }));
+        }
     }
 
     res.json({ success: true, users: rows });
@@ -538,6 +578,13 @@ async function removeUser(req, res) {
             `DELETE FROM user_candidates WHERE user_id = $1 AND political_candidate_id = $2`,
             [uid, campaignId(req)]
         );
+        // A Candidate detaching a donor removes only the party grant HE issued.
+        if (role === 'candidate') {
+            await query(
+                `DELETE FROM user_parties WHERE user_id = $1 AND granted_by = $2 AND role = 'donor'`,
+                [uid, req.user.user_id]
+            );
+        }
     }
 
     const [grants, parties] = await Promise.all([
