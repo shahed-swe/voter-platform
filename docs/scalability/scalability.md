@@ -20,6 +20,13 @@
 | Tests | **None.** Not one test file |
 | Onboarding | README covers setup only, and is outdated (single-tenant era) |
 
+**Data-modeling assessment (2026-09-02)** — a four-part honest review of the
+current schema, feeding Phase 4:
+[what's done right](01-whats-done-right.md) ·
+[shortfalls](02-shortfalls.md) ·
+[scalability outlook](03-scalability.md) ·
+[N+1 inventory](04-n-plus-one.md)
+
 ---
 
 ## Phase 1 — Database documentation + ER diagram
