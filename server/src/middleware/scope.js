@@ -15,8 +15,11 @@ function scopeToCandidate(req, _res, next) {
 
     const active = req.user.active_candidate;
     if (!active) {
-        if (req.user.is_super_admin) {
-            // Allow through (some endpoints are candidate-agnostic for super-admins)
+        // Super admins and party-level users (Political Admin / Donor) may
+        // operate without an active constituency; endpoints that require one
+        // still throw via their local tenant() guard.
+        const hasPartyGrant = (req.user.parties || []).length > 0;
+        if (req.user.is_super_admin || hasPartyGrant) {
             req.candidateId = null;
             return next();
         }

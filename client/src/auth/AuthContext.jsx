@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState, useCallback } 
 import * as authApi from '../api/auth';
 import * as candidatesApi from '../api/candidates';
 import { setUnauthorizedHandler } from '../api/client';
+import { queryClient } from '../queryClient.js';
 
 const AuthContext = createContext(null);
 
@@ -39,6 +40,10 @@ export function AuthProvider({ children }) {
     const logout = useCallback(() => {
         persist(null, null, null);
         setState({ token: null, user: null, candidate: null, loading: false });
+        // Wipe every cached query: keys are per-constituency, not per-user, so
+        // a restricted user logging in next in this tab must never be served
+        // the previous user's (broader) cached lists/options.
+        queryClient.clear();
         // NOTE: we deliberately don't call authApi.logout(). The backend's
         // /auth/logout is a no-op (just returns success) and JWTs are
         // stateless — invalidation happens here by dropping the token from
@@ -74,6 +79,8 @@ export function AuthProvider({ children }) {
         async (username, password) => {
             const res = await authApi.login(username, password);
             if (!res?.success) throw new Error(res?.error || 'Login failed');
+            // Fresh session, fresh cache (see logout note).
+            queryClient.clear();
             // For now, only candidate-bound users land here. The active_candidate
             // metadata returned by /login is just the id; fetch the full record
             // via /me so we have title/subtitle/filter_config.

@@ -8,6 +8,7 @@ router.use(verifyToken);
 
 // User management
 router.get('/users', asyncHandler(c.listUsers));
+router.get('/multi-party-volunteers', asyncHandler(c.multiPartyVolunteers));
 router.post('/users', asyncHandler(c.createUser));
 router.put('/users/:user_id', asyncHandler(c.updateUser));
 router.put('/users/:user_id/password', asyncHandler(c.changePassword));

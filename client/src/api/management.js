@@ -17,6 +17,9 @@ export const listUsers = () =>
 export const createUser = (body) =>
     client.post('/management/users', body).then((r) => r.data);
 
+export const updateUser = (userId, body) =>
+    client.put(`/management/users/${userId}`, body).then((r) => r.data);
+
 export const updateRegion = (userId, body) =>
     client.put(`/management/users/${userId}/region`, body).then((r) => r.data);
 

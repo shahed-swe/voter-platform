@@ -1,10 +1,10 @@
 const router = require('express').Router();
 const asyncHandler = require('../utils/asyncHandler');
-const { optionalAuth } = require('../middleware/auth');
+const { verifyToken } = require('../middleware/auth');
 const c = require('../controllers/geoController');
 
 // All geo endpoints return GeoJSON FeatureCollections.
-router.use(optionalAuth);
+router.use(verifyToken);
 
 router.get('/villages',                       asyncHandler(c.villages));
 router.get('/wards',                          asyncHandler(c.wards));

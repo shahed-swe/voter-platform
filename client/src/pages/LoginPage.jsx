@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { useLocation, useNavigate, Navigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext.jsx';
+import { roleHome } from '../auth/roleHome.js';
 import { Spinner } from '../components/LoadingState.jsx';
 
 export default function LoginPage() {
-    const { login, isAuthenticated, loading: authLoading } = useAuth();
+    const { login, isAuthenticated, user, loading: authLoading } = useAuth();
     const navigate = useNavigate();
     const location = useLocation();
-    const from = location.state?.from?.pathname || '/dashboard';
+    // Land where the role belongs (party-level roles have no dashboard).
+    const from = location.state?.from?.pathname || null;
 
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
@@ -22,7 +24,7 @@ export default function LoginPage() {
             </div>
         );
     }
-    if (isAuthenticated) return <Navigate to={from} replace />;
+    if (isAuthenticated) return <Navigate to={from || roleHome(user)} replace />;
 
     async function handleSubmit(e) {
         e.preventDefault();
@@ -33,8 +35,8 @@ export default function LoginPage() {
         setBusy(true);
         setError(null);
         try {
-            await login(username.trim(), password);
-            navigate(from, { replace: true });
+            const loggedIn = await login(username.trim(), password);
+            navigate(from || roleHome(loggedIn), { replace: true });
         } catch (err) {
             setError(err.response?.data?.error || err.message || 'Login failed');
         } finally {

@@ -7,9 +7,32 @@ function tenant(req) {
     return req.candidateId;
 }
 
+// ── Volunteer assignment restriction (allowed_wards / allowed_voter_areas) ──
+// Applied on every endpoint that returns voters directly, so a restricted user
+// cannot reach voters outside their assignment no matter which route they hit.
+function assignedWards(req) {
+    return req.user?.allowed_wards?.length ? req.user.allowed_wards : null;
+}
+function assignedAreas(req) {
+    return req.user?.allowed_voter_areas?.length ? req.user.allowed_voter_areas : null;
+}
+function requireAreaAllowed(req, area) {
+    const allowed = assignedAreas(req);
+    if (allowed && !allowed.includes(area)) {
+        throw new ForbiddenError('Voter area not in your allowed areas');
+    }
+}
+function voterInAssignment(req, voter) {
+    const wards = assignedWards(req);
+    if (wards && voter.ward && !wards.includes(voter.ward)) return false;
+    const areas = assignedAreas(req);
+    if (areas && voter.voter_area_name && !areas.includes(voter.voter_area_name)) return false;
+    return true;
+}
+
 async function getById(req, res) {
     const voter = await voterModel.findById(tenant(req), req.params.voter_id);
-    if (!voter) throw new NotFoundError('Voter not found');
+    if (!voter || !voterInAssignment(req, voter)) throw new NotFoundError('Voter not found');
     res.json({ success: true, voter });
 }
 
@@ -39,7 +62,11 @@ async function geoOptions(req, res) {
 
 async function search(req, res) {
     const limit = req.query.limit ? parseInt(req.query.limit, 10) : 50;
-    const voters = await voterModel.search(tenant(req), req.params.query, { limit });
+    // Restricted users only find voters inside their assignment (enforced in
+    // SQL so out-of-scope rows can't eat the LIMIT).
+    const voters = await voterModel.search(tenant(req), req.params.query, {
+        limit, wards: assignedWards(req), areas: assignedAreas(req),
+    });
     res.json({ success: true, voters });
 }
 
@@ -47,11 +74,14 @@ async function byVillage(req, res) {
     const { village_id } = req.params;
     const limit = req.query.limit ? parseInt(req.query.limit, 10) : 1000;
     const offset = req.query.offset ? parseInt(req.query.offset, 10) : 0;
-    const voters = await voterModel.byVillage(tenant(req), village_id, { limit, offset });
+    const voters = await voterModel.byVillage(tenant(req), village_id, {
+        limit, offset, wards: assignedWards(req), areas: assignedAreas(req),
+    });
     res.json({ success: true, voters });
 }
 
 async function byVoterArea(req, res) {
+    requireAreaAllowed(req, req.params.voter_area);
     const voters = await voterModel.byVoterArea(tenant(req), req.params.voter_area, {
         limit: parseInt(req.query.limit || 1000, 10),
         offset: parseInt(req.query.offset || 0, 10),
@@ -61,8 +91,16 @@ async function byVoterArea(req, res) {
 
 async function byVoterAreas(req, res) {
     const { areas = [], status, search, limit, offset } = req.body || {};
+    // Narrow the requested areas to the caller's assignment (none requested →
+    // the whole assignment; no overlap → 403).
+    let scoped = Array.isArray(areas) ? areas.filter(Boolean) : [];
+    const allowed = assignedAreas(req);
+    if (allowed) {
+        scoped = scoped.length ? scoped.filter((a) => allowed.includes(a)) : allowed;
+        if (!scoped.length) throw new ForbiddenError('Voter area not in your allowed areas');
+    }
     const result = await voterModel.byVoterAreas(tenant(req), {
-        areas,
+        areas: scoped,
         status,
         search,
         limit: limit ? parseInt(limit, 10) : 500,
@@ -72,10 +110,14 @@ async function byVoterAreas(req, res) {
 }
 
 async function listVoterAreas(req, res) {
-    res.json({ success: true, voter_areas: await voterModel.listVoterAreas(tenant(req)) });
+    let areas = await voterModel.listVoterAreas(tenant(req));
+    const allowed = assignedAreas(req);
+    if (allowed) areas = areas.filter((a) => allowed.includes(a.voter_area ?? a.voter_area_name ?? a));
+    res.json({ success: true, voter_areas: areas });
 }
 
 async function voterAreaStats(req, res) {
+    requireAreaAllowed(req, req.params.voter_area);
     const stats = await voterModel.voterAreaStats(tenant(req), req.params.voter_area);
     res.json({ success: true, stats });
 }
@@ -118,31 +160,31 @@ async function filtered(req, res) {
         if (SCOPE_SAFE.has(k) && v != null && v !== '') safeScope[k] = v;
     }
 
-    // Enforce ward restriction for volunteers: allowed_wards in JWT limits what ward can be requested.
+    // Merge: scope is broader context, filters are user refinements
+    const merged = { ...safeScope, ...filters };
+
+    // Enforce ward/area restriction for volunteers — applied to the MERGED
+    // filters so neither the scope nor a user-facing filter can escape the
+    // assignment. Values arrive as strings OR arrays (multi-select): narrow
+    // whatever was requested down to the assignment; nothing requested
+    // defaults to the whole assignment; no overlap at all is a 403.
+    const toList = (v) => (v == null || v === '' ? [] : (Array.isArray(v) ? v : [v]).filter(Boolean));
     const allowedWards = req.user?.allowed_wards;
     if (allowedWards?.length) {
-        if (safeScope.ward && !allowedWards.includes(safeScope.ward)) {
-            throw new ForbiddenError('Ward not in your allowed wards');
-        }
-        // If no ward scoped yet, force to first allowed ward so they can't see all wards.
-        if (!safeScope.ward) {
-            safeScope.ward = allowedWards[0];
-        }
+        const requested = toList(merged.ward);
+        const wards = requested.length ? requested.filter((w) => allowedWards.includes(w)) : allowedWards;
+        if (!wards.length) throw new ForbiddenError('Ward not in your allowed wards');
+        merged.ward = wards;
     }
 
     // Finer voter-area restriction (volunteers assigned specific voter areas — #12).
     const allowedAreas = req.user?.allowed_voter_areas;
     if (allowedAreas?.length) {
-        if (safeScope.voter_area && !allowedAreas.includes(safeScope.voter_area)) {
-            throw new ForbiddenError('Voter area not in your allowed areas');
-        }
-        if (!safeScope.voter_area) {
-            safeScope.voter_area = allowedAreas.length === 1 ? allowedAreas[0] : allowedAreas;
-        }
+        const requested = toList(merged.voter_area);
+        const areas = requested.length ? requested.filter((a) => allowedAreas.includes(a)) : allowedAreas;
+        if (!areas.length) throw new ForbiddenError('Voter area not in your allowed areas');
+        merged.voter_area = areas;
     }
-
-    // Merge: scope is broader context, filters are user refinements
-    const merged = { ...safeScope, ...filters };
 
     const result = await voterModel.findByFilters(candidateId, {
         filters: merged,
@@ -172,8 +214,16 @@ async function attributeKeys(req, res) {
 async function areaOptions(req, res) {
     const candidateId = tenant(req);
     const { scope = {} } = req.body || {};
-    const ward = scope.ward || undefined;
-    const areas = await voterModel.listVoterAreasByScope(candidateId, { ward });
+    let ward = scope.ward || undefined;
+    // Restricted users only get options inside their assignment.
+    const allowedWards = assignedWards(req);
+    if (allowedWards) {
+        const requested = (Array.isArray(ward) ? ward : ward ? [ward] : []).filter((w) => allowedWards.includes(w));
+        ward = requested.length ? requested : allowedWards;
+    }
+    let areas = await voterModel.listVoterAreasByScope(candidateId, { ward });
+    const allowedAreas = assignedAreas(req);
+    if (allowedAreas) areas = areas.filter((a) => allowedAreas.includes(a.voter_area_name));
     res.json({ success: true, areas });
 }
 

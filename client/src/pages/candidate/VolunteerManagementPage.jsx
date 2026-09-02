@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import * as peopleApi from '../../api/people.js';
 import * as layersApi from '../../api/layers.js';
+import PasswordInput from '../../components/PasswordInput.jsx';
 import { keys, TIER } from '../../api/queryKeys.js';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { wardLabelToScope } from '../../utils/geoScope.js';
@@ -230,7 +231,7 @@ function AddVolunteerModal({ constituencyId, onClose, onAdded, wardOptions, ward
                                 </div>
                                 <div>
                                     <label className="block text-xs font-medium text-gray-600 mb-1">Password *</label>
-                                    <input className={INPUT} required type="password" value={form.password} onChange={set('password')} />
+                                    <PasswordInput className={INPUT} required value={form.password} onChange={set('password')} autoComplete="new-password" />
                                 </div>
                             </div>
                             <div>

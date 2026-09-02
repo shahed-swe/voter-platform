@@ -1,6 +1,14 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import AppLayout from './components/AppLayout.jsx';
 import ProtectedRoute from './auth/ProtectedRoute.jsx';
+import { useAuth } from './auth/AuthContext.jsx';
+import { roleHome } from './auth/roleHome.js';
+import PartyHomePage from './pages/party/PartyHomePage.jsx';
+import PartyCandidatePage from './pages/party/PartyCandidatePage.jsx';
+import PartySurveysPage from './pages/party/PartySurveysPage.jsx';
+import PartyDonationsPage from './pages/party/PartyDonationsPage.jsx';
+import DonorProfilePage from './pages/donor/DonorProfilePage.jsx';
+import VolunteerDonationsPage from './pages/volunteer/VolunteerDonationsPage.jsx';
 
 import LoginPage from './pages/LoginPage.jsx';
 import DashboardPage from './pages/DashboardPage.jsx';
@@ -13,9 +21,19 @@ import CandidatesListPage from './pages/admin/CandidatesListPage.jsx';
 import CreateCandidatePage from './pages/admin/CreateCandidatePage.jsx';
 import ImportDataPage from './pages/admin/ImportDataPage.jsx';
 import PoliticalCandidatesPage from './pages/admin/PoliticalCandidatesPage.jsx';
+import MultiPartyVolunteersPage from './pages/admin/MultiPartyVolunteersPage.jsx';
+import MainVoterHistoryPage from './pages/admin/MainVoterHistoryPage.jsx';
 import VolunteerManagementPage from './pages/candidate/VolunteerManagementPage.jsx';
 import ManagementPage from './pages/admin/ManagementPage.jsx';
+import CampaignHomePage from './pages/campaign/CampaignHomePage.jsx';
 import NotFoundPage from './pages/NotFoundPage.jsx';
+
+// Role-aware landing: party-level roles (Political Admin / Donor) get their
+// own home instead of the constituency dashboard they can't use.
+function RoleLanding() {
+    const { user } = useAuth();
+    return <Navigate to={roleHome(user)} replace />;
+}
 
 export default function App() {
     return (
@@ -29,12 +47,59 @@ export default function App() {
                     </ProtectedRoute>
                 }
             >
-                <Route index element={<Navigate to="/dashboard" replace />} />
+                <Route index element={<RoleLanding />} />
+                {/* Party-level pages (Political Admin / Donor) */}
+                <Route path="/party" element={<PartyHomePage />} />
+                <Route path="/party/candidates/:userId" element={<PartyCandidatePage />} />
+                <Route path="/party/surveys" element={<PartySurveysPage />} />
+                <Route path="/party/donations" element={<PartyDonationsPage />} />
+                <Route path="/donor" element={<DonorProfilePage />} />
+                {/* Volunteers confirm receipt of donations addressed to them (§9) */}
+                <Route
+                    path="/donations"
+                    element={
+                        <ProtectedRoute roles={['volunteer']}>
+                            <VolunteerDonationsPage />
+                        </ProtectedRoute>
+                    }
+                />
+                {/* Campaign-scoped home for the chain below the Political Admin */}
+                <Route
+                    path="/campaign"
+                    element={
+                        <ProtectedRoute roles={['candidate', 'admin', 'sub_admin']}>
+                            <CampaignHomePage />
+                        </ProtectedRoute>
+                    }
+                />
                 <Route path="/dashboard"        element={<DashboardPage />} />
                 <Route path="/canvassing"       element={<CanvassingPage />} />
-                <Route path="/analytics"        element={<AnalyticsPage />} />
-                <Route path="/survey-data"      element={<SurveyDataPage />} />
-                <Route path="/election-results" element={<ElectionResultsPage />} />
+                {/* Survey review / analytics are for the hierarchy ABOVE the
+                    volunteer — volunteers only canvass. */}
+                <Route
+                    path="/analytics"
+                    element={
+                        <ProtectedRoute roles={['candidate', 'admin', 'sub_admin']}>
+                            <AnalyticsPage />
+                        </ProtectedRoute>
+                    }
+                />
+                <Route
+                    path="/survey-data"
+                    element={
+                        <ProtectedRoute roles={['candidate', 'admin', 'sub_admin']}>
+                            <SurveyDataPage />
+                        </ProtectedRoute>
+                    }
+                />
+                <Route
+                    path="/election-results"
+                    element={
+                        <ProtectedRoute roles={['candidate', 'admin', 'sub_admin']}>
+                            <ElectionResultsPage />
+                        </ProtectedRoute>
+                    }
+                />
                 <Route
                     path="/admin"
                     element={
@@ -77,20 +142,38 @@ export default function App() {
                         </ProtectedRoute>
                     }
                 />
-                {/* Volunteer management (candidate role) */}
+                {/* §5: volunteers working across parties — Main Admin only */}
+                <Route
+                    path="/admin/multi-party-volunteers"
+                    element={
+                        <ProtectedRoute requireSuperAdmin>
+                            <MultiPartyVolunteersPage />
+                        </ProtectedRoute>
+                    }
+                />
+                {/* §10: cross-party voter support history — Main Admin only */}
+                <Route
+                    path="/admin/voter-history"
+                    element={
+                        <ProtectedRoute requireSuperAdmin>
+                            <MainVoterHistoryPage />
+                        </ProtectedRoute>
+                    }
+                />
+                {/* Volunteer management — the whole campaign chain above volunteers */}
                 <Route
                     path="/volunteers"
                     element={
-                        <ProtectedRoute roles={['candidate', 'admin']}>
+                        <ProtectedRoute roles={['candidate', 'admin', 'sub_admin']}>
                             <VolunteerManagementPage />
                         </ProtectedRoute>
                     }
                 />
-                {/* Unified hierarchy management (#12) — candidate → admin → sub_admin → volunteer */}
+                {/* Unified hierarchy management — Political Admin → candidate → admin → sub_admin → volunteer */}
                 <Route
                     path="/management"
                     element={
-                        <ProtectedRoute roles={['candidate', 'admin', 'sub_admin']}>
+                        <ProtectedRoute roles={['tenant_admin', 'candidate', 'admin', 'sub_admin']}>
                             <ManagementPage />
                         </ProtectedRoute>
                     }

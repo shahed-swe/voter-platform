@@ -1,5 +1,6 @@
 const userModel = require('../models/userModel');
 const candidateModel = require('../models/candidateModel');
+const partyModel = require('../models/partyModel');
 const { comparePassword } = require('../utils/password');
 const { sign } = require('../utils/jwt');
 const { AuthError, ValidationError, ForbiddenError } = require('../utils/errors');
@@ -13,12 +14,23 @@ const { AuthError, ValidationError, ForbiddenError } = require('../utils/errors'
  */
 async function buildTokenPayload(user, { forceCandidate, forcePoliticalCandidate } = {}) {
     const grants = await candidateModel.listForUser(user.user_id);
+    // Party-level grants (Political Admin / Donor) — these users may hold no
+    // constituency grant at all.
+    const partyGrants = await partyModel.listForUser(user.user_id);
     const isSuper = !!user.is_super_admin;
 
     // A volunteer may hold several grants for the SAME constituency under
     // different political candidates. The active grant is therefore identified by
     // (constituency, political_candidate) — not constituency alone.
-    const activeCandidate = forceCandidate || grants[0]?.candidate_id || null;
+    let activeCandidate = forceCandidate || grants[0]?.candidate_id || null;
+    // Super admins usually hold NO constituency grants (their power is the
+    // flag, not a grant) — without a default the data pages all 403 until
+    // they use the switcher. Activate the first constituency; the header
+    // switcher moves them anywhere else.
+    if (!activeCandidate && isSuper) {
+        const all = await candidateModel.listActive();
+        activeCandidate = all[0]?.candidate_id || null;
+    }
     const inCandidate = grants.filter((g) => g.candidate_id === activeCandidate);
     const activeGrant =
         (forcePoliticalCandidate != null
@@ -55,6 +67,11 @@ async function buildTokenPayload(user, { forceCandidate, forcePoliticalCandidate
             political_candidate_id: g.political_candidate_id || null,
             political_candidate_name: g.political_candidate_name || null,
         })),
+        parties:               partyGrants.map((p) => ({
+            id:   p.party_id,
+            name: p.party_name,
+            role: p.role,
+        })),
         active_candidate:      activeCandidate,
         active_political_candidate_id: politicalCandidateId,
         allowed_wards:         allowedWards,
@@ -77,8 +94,9 @@ async function login(req, res) {
     const fullUser = await userModel.findById(user.user_id);
     const payload = await buildTokenPayload({ ...user, ...fullUser });
 
-    // Reject users with no candidate access (super_admins are allowed through)
-    if (!payload.is_super_admin && payload.candidates.length === 0) {
+    // Reject users with neither candidate nor party access (super_admins and
+    // party-level users — Political Admins / Donors — are allowed through).
+    if (!payload.is_super_admin && payload.candidates.length === 0 && payload.parties.length === 0) {
         throw new ForbiddenError('No campaign assigned to this account. Contact your administrator.');
     }
 
@@ -98,6 +116,7 @@ async function login(req, res) {
             allowed_wards: payload.allowed_wards,
             allowed_voter_areas: payload.allowed_voter_areas,
             political_candidate_id: payload.political_candidate_id,
+            parties: payload.parties,
         },
         candidates: payload.candidates,
         active_candidate: payload.active_candidate,
@@ -125,6 +144,7 @@ async function me(req, res) {
             allowed_wards: req.user.allowed_wards || null,
             allowed_voter_areas: req.user.allowed_voter_areas || null,
             political_candidate_id: req.user.political_candidate_id || null,
+            parties: req.user.parties || [],
         },
         candidates: req.user.candidates || [],
         active_candidate: activeCandidate,

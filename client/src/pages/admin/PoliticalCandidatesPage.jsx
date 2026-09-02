@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as peopleApi from '../../api/people.js';
 import MultiSelect from '../../components/MultiSelect.jsx';
+import PasswordInput from '../../components/PasswordInput.jsx';
 import { SkeletonList, Skeleton, ErrorState, EmptyState, Spinner } from '../../components/LoadingState.jsx';
 import { useAuth } from '../../auth/AuthContext.jsx';
 import { useCandidates } from '../../hooks/queries/index.js';
@@ -64,7 +65,7 @@ function CreateCandidateModal({ constituencies, onClose, onCreated }) {
                             <input className={INPUT} required value={form.username} onChange={set('username')} />
                         </Field>
                         <Field label="Password *">
-                            <input className={INPUT} required type="password" value={form.password} onChange={set('password')} />
+                            <PasswordInput className={INPUT} required value={form.password} onChange={set('password')} autoComplete="new-password" />
                         </Field>
                     </div>
                     <Field label="Email (optional)">
