@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import * as canvassingApi from '../api/canvassing.js';
 import { useAuth } from '../auth/AuthContext.jsx';
 import VoterHistoryDrawer from '../components/party/VoterHistoryDrawer.jsx';
@@ -20,28 +20,133 @@ function SupportBadge({ level, rating }) {
         : r <= 2 && r > 0 ? 'bg-red-100 text-red-700'
         : 'bg-gray-100 text-gray-600';
     return (
-        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${tone}`}>
+        <span className={`text-xs px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${tone}`}>
             {level || 'Unknown'}{r ? ` · ${toBn(r)}/৫` : ''}
         </span>
     );
 }
 
-function StatBox({ label, value, tone }) {
+// The stat cards double as the list's filters — matching the server's own
+// definitions (stats query: strong = rating ≥ 4, weak = rating ≤ 2).
+const FILTERS = {
+    all:      { label: 'মোট জরিপ',      stat: 'total_canvasses', tone: 'text-brand' },
+    unique:   { label: 'Voter (unique)', stat: 'unique_voters',   tone: 'text-blue-600' },
+    strong:   { label: 'Strong support', stat: 'strong_support',  tone: 'text-green-600' },
+    weak:     { label: 'Weak support',   stat: 'weak_support',    tone: 'text-red-600' },
+    followup: { label: 'Follow-up',      stat: 'follow_up',       tone: 'text-amber-600' },
+};
+
+function applyFilter(records, filter) {
+    switch (filter) {
+        case 'strong':   return records.filter((r) => Number(r.support_rating) >= 4);
+        case 'weak':     return records.filter((r) => { const n = Number(r.support_rating); return n > 0 && n <= 2; });
+        case 'followup': return records.filter((r) => r.follow_up_needed);
+        case 'unique': { // latest visit per voter (records arrive newest-first)
+            const seen = new Set();
+            return records.filter((r) => (seen.has(r.voter_id) ? false : (seen.add(r.voter_id), true)));
+        }
+        default: return records;
+    }
+}
+
+function FilterCard({ id, value, active, onClick }) {
+    const f = FILTERS[id];
     return (
-        <div className="bg-white border border-brand/20 rounded-lg px-4 py-3">
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">{label}</div>
-            <div className={`text-2xl font-bold ${tone || 'text-brand'}`}>{toBn(Number(value || 0).toLocaleString('en-US'))}</div>
-        </div>
+        <button
+            type="button"
+            onClick={onClick}
+            aria-pressed={active}
+            className={`text-left bg-white rounded-lg px-4 py-3 border transition-colors ${
+                active
+                    ? 'border-brand ring-1 ring-brand bg-brand/5'
+                    : 'border-brand/20 hover:border-brand/50'
+            }`}
+            title={id === 'all' ? 'সব জরিপ দেখুন' : `শুধু ${f.label} দেখুন`}
+        >
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">{f.label}</div>
+            <div className={`text-2xl font-bold ${f.tone}`}>{toBn(Number(value || 0).toLocaleString('en-US'))}</div>
+        </button>
     );
 }
 
-// Detail row for the expanded survey response
+// Detail row inside the record dialog
 function Detail({ label, value }) {
     if (value == null || value === '' || value === false) return null;
     return (
         <div className="flex gap-2 text-sm">
-            <span className="text-gray-500 min-w-[130px]">{label}:</span>
+            <span className="text-gray-500 min-w-[130px] flex-shrink-0">{label}:</span>
             <span className="text-gray-800 font-medium">{String(value)}</span>
+        </div>
+    );
+}
+
+/** Full survey response in a dialog (replaces the old inline expansion). */
+function RecordModal({ r, isSuper, onHistory, onClose }) {
+    useEffect(() => {
+        const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+    }, [onClose]);
+
+    return (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4" role="dialog" aria-modal="true">
+            <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+            <div className="relative bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[85vh] flex flex-col">
+                <div className="flex items-start gap-3 px-5 py-4 border-b border-gray-100">
+                    <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-gray-900 truncate">
+                            {r.voter_name || `Voter #${r.voter_id}`}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-0.5">
+                            {r.sos_vid && <span>SOS: {r.sos_vid} · </span>}
+                            {r.ward && <span className="bn">ওয়ার্ড {r.ward} · </span>}
+                            {r.voter_area_name}
+                        </div>
+                    </div>
+                    <SupportBadge level={r.support_level} rating={r.support_rating} />
+                    <button
+                        className="h-8 w-8 -mr-1 rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-100 flex-shrink-0"
+                        onClick={onClose}
+                        aria-label="বন্ধ করুন"
+                    >
+                        <i className="fas fa-xmark" />
+                    </button>
+                </div>
+
+                <div className="px-5 py-4 overflow-y-auto space-y-1.5">
+                    <Detail label="Support level" value={r.support_level} />
+                    <Detail label="Support rating" value={r.support_rating ? `${toBn(r.support_rating)}/৫` : null} />
+                    <Detail label="Undecided" value={r.is_undecided ? 'হ্যাঁ' : null} />
+                    <Detail label="Issues / concerns" value={r.issues_concerns} />
+                    <Detail label="Household size" value={r.household_size} />
+                    <Detail label="Member count" value={r.voter_member_count} />
+                    <Detail label="Income bracket" value={r.income_bracket} />
+                    <Detail label="Minority" value={r.is_minority ? 'হ্যাঁ' : null} />
+                    <Detail label="Follow-up" value={r.follow_up_needed ? 'প্রয়োজন' : null} />
+                    <Detail label="Follow-up date" value={r.follow_up_date ? fmtDate(r.follow_up_date) : null} />
+                    <Detail label="Phone" value={r.contact_phone} />
+                    <Detail label="Email" value={r.contact_email} />
+                    <Detail label="Building" value={r.building_name} />
+                    <Detail label="Floor / Flat" value={[r.floor_number, r.flat_number].filter(Boolean).join(' / ') || null} />
+                    <Detail label="Address" value={r.address} />
+                    <Detail label="Source" value={r.source} />
+                    <Detail label="Canvassed by" value={r.canvasser_name} />
+                    <Detail label="Date" value={fmtDate(r.canvass_date)} />
+                </div>
+
+                {/* §10: only the Main Admin sees the cross-party timeline */}
+                {isSuper && (
+                    <div className="px-5 py-3 border-t border-gray-100">
+                        <button
+                            className="inline-flex items-center gap-2 text-sm text-brand border border-brand/30 rounded-md px-3 py-1.5 hover:bg-brand/5"
+                            onClick={() => onHistory({ voter_id: r.voter_id, name: r.voter_name })}
+                        >
+                            <i className="fas fa-clock-rotate-left" />
+                            সম্পূর্ণ ভিজিট history (cross-party)
+                        </button>
+                    </div>
+                )}
+            </div>
         </div>
     );
 }
@@ -52,9 +157,11 @@ export default function SurveyDataPage() {
     const [records, setRecords] = useState(null);
     const [error, setError]     = useState(null);
     const [q, setQ]             = useState('');
-    const [expanded, setExpanded] = useState(null);
+    const [filter, setFilter]   = useState('all');
+    const [view, setView]       = useState('table'); // 'table' | 'cards'
+    const [selected, setSelected] = useState(null);  // record for the dialog
     const [loading, setLoading] = useState(false);
-    const [history, setHistory] = useState(null); // super-admin: cross-party timeline drawer
+    const [history, setHistory] = useState(null);    // super-admin: cross-party timeline drawer
 
     const constituencyId = candidate?.candidate_id;
 
@@ -86,6 +193,8 @@ export default function SurveyDataPage() {
         return () => clearTimeout(id);
     }, [q]); // eslint-disable-line react-hooks/exhaustive-deps
 
+    const visible = useMemo(() => applyFilter(records || [], filter), [records, filter]);
+
     if (error) return <ErrorState error={error} onRetry={() => load('', true)} />;
     if (records === null) {
         return (
@@ -98,6 +207,9 @@ export default function SurveyDataPage() {
         );
     }
 
+    const isSuper = !!user?.is_super_admin;
+    const openHistory = (h) => { setSelected(null); setHistory(h); };
+
     return (
         <div className="max-w-5xl mx-auto space-y-5">
             <div>
@@ -107,93 +219,144 @@ export default function SurveyDataPage() {
                 </p>
             </div>
 
-            {/* Stats */}
+            {/* Stats = filters: click a card to see only those records */}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                <StatBox label="মোট জরিপ" value={stats?.total_canvasses} />
-                <StatBox label="Voter (unique)" value={stats?.unique_voters} tone="text-blue-600" />
-                <StatBox label="Strong support" value={stats?.strong_support} tone="text-green-600" />
-                <StatBox label="Weak support" value={stats?.weak_support} tone="text-red-600" />
-                <StatBox label="Follow-up" value={stats?.follow_up} tone="text-amber-600" />
+                {Object.keys(FILTERS).map((id) => (
+                    <FilterCard
+                        key={id}
+                        id={id}
+                        value={stats?.[FILTERS[id].stat]}
+                        active={filter === id}
+                        onClick={() => setFilter(filter === id && id !== 'all' ? 'all' : id)}
+                    />
+                ))}
             </div>
 
-            {/* Search */}
-            <div className="relative">
-                <i className="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm" />
-                <input
-                    className="w-full border border-gray-300 rounded-md pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand focus:border-brand"
-                    placeholder="Voter নাম বা SOS VID দিয়ে খুঁজুন..."
-                    value={q}
-                    onChange={(e) => setQ(e.target.value)}
+            {/* Search + view toggle */}
+            <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                    <i className="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm" />
+                    <input
+                        className="w-full border border-gray-300 rounded-md pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand focus:border-brand"
+                        placeholder="Voter নাম বা SOS VID দিয়ে খুঁজুন..."
+                        value={q}
+                        onChange={(e) => setQ(e.target.value)}
+                    />
+                    {loading && <Spinner size="sm" />}
+                </div>
+                <div className="flex rounded-md border border-gray-300 overflow-hidden flex-shrink-0" role="group" aria-label="তালিকার ধরন">
+                    {[['table', 'fa-table-list', 'টেবিল'], ['cards', 'fa-rectangle-list', 'কার্ড']].map(([v, icon, label]) => (
+                        <button
+                            key={v}
+                            type="button"
+                            onClick={() => setView(v)}
+                            aria-pressed={view === v}
+                            title={`${label} view`}
+                            className={`px-3 py-2 text-sm ${
+                                view === v ? 'bg-brand text-white' : 'bg-white text-gray-500 hover:bg-gray-50'
+                            } ${v === 'cards' ? 'border-l border-gray-300' : ''}`}
+                        >
+                            <i className={`fas ${icon}`} />
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            {/* Active-filter caption */}
+            {filter !== 'all' && (
+                <p className="text-sm text-gray-500 bn -mt-2">
+                    {FILTERS[filter].label} filter — {toBn(visible.length)} টি record দেখানো হচ্ছে ·{' '}
+                    <button className="text-brand hover:underline" onClick={() => setFilter('all')}>সব দেখুন</button>
+                </p>
+            )}
+
+            {visible.length === 0 ? (
+                <EmptyState
+                    icon="fa-clipboard-list"
+                    label={filter === 'all' && !q.trim() ? 'এখনো কোনো জরিপের তথ্য নেই।' : 'এই খোঁজ/filter-এ কিছু পাওয়া যায়নি।'}
                 />
-                {loading && <Spinner size="sm" />}
-            </div>
-
-            {/* Records */}
-            {records.length === 0 ? (
-                <EmptyState icon="fa-clipboard-list" label="এখনো কোনো জরিপের তথ্য নেই।" />
+            ) : view === 'table' ? (
+                <div className="bg-white border border-gray-200 rounded-lg overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                        <thead className="bg-gray-50 text-gray-600 text-xs uppercase tracking-wider">
+                            <tr>
+                                <th className="px-4 py-2.5 text-left">ভোটার</th>
+                                <th className="px-4 py-2.5 text-left">এলাকা</th>
+                                <th className="px-4 py-2.5 text-left">Support</th>
+                                <th className="px-4 py-2.5 text-left">Canvasser</th>
+                                <th className="px-4 py-2.5 text-left whitespace-nowrap">তারিখ</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                            {visible.map((r) => (
+                                <tr
+                                    key={r.canvass_id}
+                                    className="hover:bg-gray-50 cursor-pointer"
+                                    onClick={() => setSelected(r)}
+                                    tabIndex={0}
+                                    onKeyDown={(e) => { if (e.key === 'Enter') setSelected(r); }}
+                                >
+                                    <td className="px-4 py-2.5">
+                                        <div className="font-medium text-gray-900">{r.voter_name || `Voter #${r.voter_id}`}</div>
+                                        {r.sos_vid && <div className="text-xs text-gray-400">SOS: {r.sos_vid}</div>}
+                                    </td>
+                                    <td className="px-4 py-2.5 text-gray-600">
+                                        {r.ward && <span className="bn">ওয়ার্ড {r.ward}</span>}
+                                        {r.ward && r.voter_area_name ? ' · ' : ''}
+                                        {r.voter_area_name}
+                                    </td>
+                                    <td className="px-4 py-2.5">
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                            <SupportBadge level={r.support_level} rating={r.support_rating} />
+                                            {r.follow_up_needed && (
+                                                <span className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full whitespace-nowrap">Follow-up</span>
+                                            )}
+                                        </div>
+                                    </td>
+                                    <td className="px-4 py-2.5 text-gray-600 whitespace-nowrap">{r.canvasser_name || '—'}</td>
+                                    <td className="px-4 py-2.5 text-gray-500 whitespace-nowrap">{fmtDate(r.canvass_date)}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
             ) : (
                 <div className="space-y-2">
-                    {records.map((r) => {
-                        const open = expanded === r.canvass_id;
-                        return (
-                            <div key={r.canvass_id} className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                                <button
-                                    className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-gray-50"
-                                    onClick={() => setExpanded(open ? null : r.canvass_id)}
-                                >
-                                    <div className="flex-1 min-w-0">
-                                        <div className="font-medium text-gray-900 truncate">
-                                            {r.voter_name || `Voter #${r.voter_id}`}
-                                            {r.sos_vid && <span className="text-xs text-gray-400 ml-2">SOS: {r.sos_vid}</span>}
-                                        </div>
-                                        <div className="text-xs text-gray-500 truncate">
-                                            {r.ward && <span className="bn">ওয়ার্ড {r.ward} · </span>}
-                                            {r.voter_area_name}
-                                            {r.canvasser_name && <span> · by {r.canvasser_name}</span>}
-                                        </div>
-                                    </div>
-                                    <SupportBadge level={r.support_level} rating={r.support_rating} />
-                                    {r.follow_up_needed && (
-                                        <span className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full">Follow-up</span>
-                                    )}
-                                    <span className="text-xs text-gray-400 hidden sm:inline">{fmtDate(r.canvass_date)}</span>
-                                    <i className={`fas fa-chevron-${open ? 'up' : 'down'} text-gray-300 text-xs`} />
-                                </button>
-                                {open && (
-                                    <div className="px-4 py-3 border-t border-gray-100 bg-gray-50/60 space-y-1.5">
-                                        <Detail label="Support level" value={r.support_level} />
-                                        <Detail label="Support rating" value={r.support_rating ? `${toBn(r.support_rating)}/৫` : null} />
-                                        <Detail label="Undecided" value={r.is_undecided ? 'হ্যাঁ' : null} />
-                                        <Detail label="Issues / concerns" value={r.issues_concerns} />
-                                        <Detail label="Household size" value={r.household_size} />
-                                        <Detail label="Member count" value={r.voter_member_count} />
-                                        <Detail label="Income bracket" value={r.income_bracket} />
-                                        <Detail label="Minority" value={r.is_minority ? 'হ্যাঁ' : null} />
-                                        <Detail label="Follow-up date" value={r.follow_up_date ? fmtDate(r.follow_up_date) : null} />
-                                        <Detail label="Phone" value={r.contact_phone} />
-                                        <Detail label="Email" value={r.contact_email} />
-                                        <Detail label="Building" value={r.building_name} />
-                                        <Detail label="Floor / Flat" value={[r.floor_number, r.flat_number].filter(Boolean).join(' / ') || null} />
-                                        <Detail label="Address" value={r.address} />
-                                        <Detail label="Source" value={r.source} />
-                                        <Detail label="Canvassed by" value={r.canvasser_name} />
-                                        <Detail label="Date" value={fmtDate(r.canvass_date)} />
-                                        {/* §10: only the Main Admin sees the cross-party timeline */}
-                                        {user?.is_super_admin && (
-                                            <button
-                                                className="mt-2 inline-flex items-center gap-2 text-sm text-brand border border-brand/30 rounded-md px-3 py-1.5 hover:bg-brand/5"
-                                                onClick={() => setHistory({ voter_id: r.voter_id, name: r.voter_name })}
-                                            >
-                                                <i className="fas fa-clock-rotate-left" />
-                                                সম্পূর্ণ ভিজিট history (cross-party)
-                                            </button>
-                                        )}
-                                    </div>
-                                )}
+                    {visible.map((r) => (
+                        <button
+                            key={r.canvass_id}
+                            className="w-full bg-white border border-gray-200 rounded-lg px-4 py-3 flex items-center gap-3 text-left hover:bg-gray-50"
+                            onClick={() => setSelected(r)}
+                        >
+                            <div className="flex-1 min-w-0">
+                                <div className="font-medium text-gray-900 truncate">
+                                    {r.voter_name || `Voter #${r.voter_id}`}
+                                    {r.sos_vid && <span className="text-xs text-gray-400 ml-2">SOS: {r.sos_vid}</span>}
+                                </div>
+                                <div className="text-xs text-gray-500 truncate">
+                                    {r.ward && <span className="bn">ওয়ার্ড {r.ward} · </span>}
+                                    {r.voter_area_name}
+                                    {r.canvasser_name && <span> · by {r.canvasser_name}</span>}
+                                </div>
                             </div>
-                        );
-                    })}
+                            <SupportBadge level={r.support_level} rating={r.support_rating} />
+                            {r.follow_up_needed && (
+                                <span className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full">Follow-up</span>
+                            )}
+                            <span className="text-xs text-gray-400 hidden sm:inline whitespace-nowrap">{fmtDate(r.canvass_date)}</span>
+                            <i className="fas fa-chevron-right text-gray-300 text-xs" />
+                        </button>
+                    ))}
                 </div>
+            )}
+
+            {selected && (
+                <RecordModal
+                    r={selected}
+                    isSuper={isSuper}
+                    onHistory={openHistory}
+                    onClose={() => setSelected(null)}
+                />
             )}
 
             {history && (
