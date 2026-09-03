@@ -222,11 +222,16 @@ async function context(req, res) {
     const all = await candidateModel.listActive();
     const constituencies = mine ? all.filter((c) => mine.includes(c.candidate_id)) : all;
 
+    // The super admin types a party by NAME when creating party-level users —
+    // feed the autocomplete so existing parties are picked, not re-typo'd.
+    const parties = role === 'super_admin' ? await partyModel.listActive() : [];
+
     res.json({
         success: true,
         role,
         campaign_id: campaignId(req),
         my_parties: callerPartyIds(req),
+        parties: parties.map((p) => ({ id: p.party_id, name: p.name })),
         creatable_roles: CREATABLE[role],
         region_of: REGION_OF,
         // Sub-admins assign voter areas within their own wards; expose those.
@@ -266,7 +271,7 @@ async function voterAreas(req, res) {
  */
 async function listUsers(req, res) {
     const role = callerRole(req);
-    if (!role || role === 'volunteer') throw new ForbiddenError('You cannot manage users');
+    if (!role || role === 'volunteer' || role === 'donor') throw new ForbiddenError('You cannot manage users');
 
     const params = [];
     const where = [`u.is_active = true`];
