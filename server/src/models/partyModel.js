@@ -18,6 +18,11 @@ async function findById(partyId) {
     return one(`SELECT party_id, name, status FROM parties WHERE party_id = $1`, [partyId]);
 }
 
+/** All active parties — feeds the party-name autocomplete in user creation. */
+async function listActive() {
+    return many(`SELECT party_id, name FROM parties WHERE status = 'active' ORDER BY name`);
+}
+
 async function create({ partyId, name, createdBy }) {
     return one(
         `INSERT INTO parties (party_id, name, created_by)
@@ -90,5 +95,5 @@ async function listPartyUsers({ roles = null, partyIds = null, grantedBy = null 
 
 module.exports = {
     findById, findByName, create,
-    listForUser, grantPartyRole, revokePartyRole, listPartyUsers,
+    listActive, listForUser, grantPartyRole, revokePartyRole, listPartyUsers,
 };

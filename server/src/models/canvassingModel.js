@@ -130,18 +130,26 @@ async function partyRecords(partyIds, { limit = 50, offset = 0, search = null, p
         params.push(politicalCandidateId);
         searchClause += ` AND c.political_candidate_id = $${params.length}`;
     }
+    // NULL partyIds = cross-party (Main Admin); the ucx join names each
+    // record's party (pinned to the canvass's constituency so a candidate's
+    // multi-seat grants can't duplicate rows).
     const base = `
        FROM canvassing c
        JOIN voters v      ON v.voter_id = c.voter_id
        JOIN users u       ON u.user_id = c.user_id
        JOIN users pcu     ON pcu.user_id = c.political_candidate_id
        JOIN candidates cd ON cd.candidate_id = c.candidate_id
-      WHERE EXISTS (
+       LEFT JOIN user_candidates ucx
+              ON ucx.user_id = c.political_candidate_id
+             AND ucx.candidate_id = c.candidate_id
+             AND ucx.role = 'candidate'
+       LEFT JOIN parties pty ON pty.party_id = ucx.party_id
+      WHERE ($1::text[] IS NULL OR EXISTS (
           SELECT 1 FROM user_candidates uc
            WHERE uc.user_id = c.political_candidate_id
              AND uc.role = 'candidate'
              AND uc.party_id = ANY($1)
-      ) ${searchClause}`;
+      )) ${searchClause}`;
 
     const totalRow = await one(`SELECT COUNT(*)::int AS total ${base}`, params);
     params.push(limit);
@@ -154,7 +162,8 @@ async function partyRecords(partyIds, { limit = 50, offset = 0, search = null, p
                 v.name AS voter_name, v.sos_vid, v.ward, v.voter_area_name,
                 u.name AS canvasser_name,
                 pcu.name AS candidate_name, pcu.user_id AS candidate_user_id,
-                cd.name AS constituency_name, cd.candidate_id
+                cd.name AS constituency_name, cd.candidate_id,
+                pty.party_id, pty.name AS party_name
            ${base}
           ORDER BY c.canvass_date DESC
           LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
@@ -276,19 +285,25 @@ async function partyPersuadable(partyIds, { limit = 50, offset = 0 } = {}) {
  * Admin's overview can show real numbers next to every candidate.
  */
 async function partyStats(partyIds) {
+    // NULL partyIds = every party (Main Admin). The DISTINCT subquery keeps a
+    // multi-constituency candidate from double-counting their canvasses.
     return many(
         `SELECT pcu.user_id AS candidate_user_id,
                 pcu.name    AS candidate_name,
+                p.party_id, p.name AS party_name,
                 COUNT(cv.canvass_id)::int                                        AS total,
                 COUNT(DISTINCT cv.voter_id)::int                                 AS unique_voters,
                 COUNT(cv.canvass_id) FILTER (WHERE cv.support_rating >= 4)::int  AS strong_support,
                 COUNT(cv.canvass_id) FILTER (WHERE cv.follow_up_needed)::int     AS follow_up,
                 MAX(cv.canvass_date)                                             AS last_canvass
-           FROM user_candidates uc
+           FROM (SELECT DISTINCT user_id, party_id
+                   FROM user_candidates
+                  WHERE role = 'candidate' AND party_id IS NOT NULL) uc
            JOIN users pcu ON pcu.user_id = uc.user_id
+           JOIN parties p ON p.party_id = uc.party_id
            LEFT JOIN canvassing cv ON cv.political_candidate_id = uc.user_id
-          WHERE uc.role = 'candidate' AND uc.party_id = ANY($1)
-          GROUP BY pcu.user_id, pcu.name
+          WHERE ($1::text[] IS NULL OR uc.party_id = ANY($1))
+          GROUP BY pcu.user_id, pcu.name, p.party_id, p.name
           ORDER BY total DESC, pcu.name`,
         [partyIds]
     );

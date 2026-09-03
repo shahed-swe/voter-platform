@@ -151,7 +151,16 @@ function RecordModal({ r, isSuper, onHistory, onClose }) {
     );
 }
 
+// The page has two faces: campaign roles see their OWN campaign's records;
+// the Main Admin gets the platform-wide view (all parties, all candidates)
+// with party → candidate drill-down, modeled on the Political Admin's
+// /party/surveys but across every party.
 export default function SurveyDataPage() {
+    const { user } = useAuth();
+    return user?.is_super_admin ? <SuperSurveyView /> : <CampaignSurveyView />;
+}
+
+function CampaignSurveyView() {
     const { user, candidate } = useAuth();
     const [stats, setStats]     = useState(null);
     const [records, setRecords] = useState(null);
@@ -242,7 +251,7 @@ export default function SurveyDataPage() {
                         value={q}
                         onChange={(e) => setQ(e.target.value)}
                     />
-                    {loading && <Spinner size="sm" />}
+                    {loading && <span className="absolute right-3 top-1/2 -translate-y-1/2"><Spinner size="sm" /></span>}
                 </div>
                 <div className="flex rounded-md border border-gray-300 overflow-hidden flex-shrink-0" role="group" aria-label="তালিকার ধরন">
                     {[['table', 'fa-table-list', 'টেবিল'], ['cards', 'fa-rectangle-list', 'কার্ড']].map(([v, icon, label]) => (
@@ -357,6 +366,278 @@ export default function SurveyDataPage() {
                     onHistory={openHistory}
                     onClose={() => setSelected(null)}
                 />
+            )}
+
+            {history && (
+                <VoterHistoryDrawer
+                    voterId={history.voter_id}
+                    voterName={history.name}
+                    onClose={() => setHistory(null)}
+                />
+            )}
+        </div>
+    );
+}
+
+// ── Main Admin: platform-wide survey view ─────────────────────────────────────
+const PAGE_SIZE = 50;
+
+function Stars({ rating }) {
+    const r = Number(rating || 0);
+    if (!r) return <span className="text-gray-300">—</span>;
+    return (
+        <span className="whitespace-nowrap" aria-label={`${r}/5`}>
+            {[1, 2, 3, 4, 5].map((i) => (
+                <i key={i} className={`fas fa-star text-[10px] ${i <= r ? 'text-amber-400' : 'text-gray-200'}`} />
+            ))}
+        </span>
+    );
+}
+
+function Tile({ label, value, tone }) {
+    return (
+        <div className="bg-white border border-brand/20 rounded-lg px-4 py-3">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">{label}</div>
+            <div className={`text-2xl font-bold ${tone || 'text-brand'}`}>{toBn(Number(value || 0).toLocaleString('en-US'))}</div>
+        </div>
+    );
+}
+
+const CHIP = 'px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap border transition-colors';
+const chipCls = (active) => `${CHIP} ${active
+    ? 'bg-brand text-white border-brand'
+    : 'bg-white text-gray-700 border-gray-200 hover:border-brand/50'}`;
+
+function SuperSurveyView() {
+    const [stats, setStats]     = useState(null); // one row per candidate (all parties)
+    const [records, setRecords] = useState(null);
+    const [total, setTotal]     = useState(0);
+    const [page, setPage]       = useState(0);
+    const [party, setParty]     = useState('all');   // party_id
+    const [pc, setPc]           = useState('all');   // candidate user_id
+    const [q, setQ]             = useState('');
+    const [debouncedQ, setDebouncedQ] = useState('');
+    const [error, setError]     = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [history, setHistory] = useState(null);
+
+    useEffect(() => {
+        canvassingApi.partyStats()
+            .then((r) => setStats(r.stats || []))
+            .catch(setError);
+    }, []);
+
+    useEffect(() => {
+        const t = setTimeout(() => { setDebouncedQ(q.trim()); setPage(0); }, 350);
+        return () => clearTimeout(t);
+    }, [q]);
+
+    useEffect(() => {
+        let cancelled = false;
+        setLoading(true);
+        canvassingApi.partyRecords({
+            party_id: party === 'all' ? undefined : party,
+            political_candidate_id: pc === 'all' ? undefined : pc,
+            q: debouncedQ || undefined,
+            limit: PAGE_SIZE,
+            offset: page * PAGE_SIZE,
+        })
+            .then((r) => { if (!cancelled) { setRecords(r.records || []); setTotal(r.total || 0); setError(null); } })
+            .catch((e) => { if (!cancelled) setError(e); })
+            .finally(() => { if (!cancelled) setLoading(false); });
+        return () => { cancelled = true; };
+    }, [party, pc, debouncedQ, page]);
+
+    // Party chips (with per-party totals) from the stats rows.
+    const parties = useMemo(() => {
+        const map = new Map();
+        for (const s of stats || []) {
+            const p = map.get(s.party_id) || { id: s.party_id, name: s.party_name, total: 0 };
+            p.total += Number(s.total || 0);
+            map.set(s.party_id, p);
+        }
+        return [...map.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+    }, [stats]);
+
+    // Candidate chips inside the selected party.
+    const candidates = useMemo(() => (
+        (stats || [])
+            .filter((s) => party === 'all' || s.party_id === party)
+            .filter((s) => Number(s.total) > 0 || String(s.candidate_user_id) === pc)
+    ), [stats, party, pc]);
+
+    const totals = useMemo(() => (stats || []).reduce((t, s) => ({
+        surveys:  t.surveys + Number(s.total || 0),
+        strong:   t.strong + Number(s.strong_support || 0),
+        followUp: t.followUp + Number(s.follow_up || 0),
+    }), { surveys: 0, strong: 0, followUp: 0 }), [stats]);
+
+    const pickParty = (id) => { setParty(id); setPc('all'); setPage(0); };
+    const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+    if (error) return <ErrorState error={error} />;
+    if (stats === null || records === null) {
+        return (
+            <div className="max-w-6xl mx-auto space-y-5">
+                <Skeleton className="h-8 w-48" />
+                <SkeletonStats count={5} className="grid grid-cols-2 md:grid-cols-5 gap-3" />
+                <Skeleton className="h-10 w-full" />
+                <SkeletonList rows={8} lines={1} />
+            </div>
+        );
+    }
+
+    return (
+        <div className="max-w-6xl mx-auto space-y-4">
+            <div>
+                <h1 className="text-xl font-bold text-gray-900">Survey Data</h1>
+                <p className="text-sm text-gray-500 mt-0.5">
+                    সব দল ও সব candidate-এর সংগৃহীত জরিপ — platform-wide
+                </p>
+            </div>
+
+            {/* Platform overview */}
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                <Tile label="মোট জরিপ" value={totals.surveys} />
+                <Tile label="রাজনৈতিক দল" value={parties.length} tone="text-rose-600" />
+                <Tile label="Candidate" value={stats.length} tone="text-purple-600" />
+                <Tile label="Strong support" value={totals.strong} tone="text-green-600" />
+                <Tile label="Follow-up" value={totals.followUp} tone="text-amber-600" />
+            </div>
+
+            {/* Party drill-down */}
+            <div className="flex gap-2 overflow-x-auto pb-1 -mb-1">
+                <button className={chipCls(party === 'all')} onClick={() => pickParty('all')}>
+                    সব দল <span className={`bn ${party === 'all' ? 'text-white/80' : 'text-gray-400'}`}>{toBn(totals.surveys)}</span>
+                </button>
+                {parties.map((p) => (
+                    <button key={p.id} className={chipCls(party === p.id)} onClick={() => pickParty(p.id)}>
+                        <i className={`fas fa-flag mr-1.5 ${party === p.id ? 'text-white/80' : 'text-rose-400'}`} />
+                        {p.name} <span className={`bn ${party === p.id ? 'text-white/80' : 'text-gray-400'}`}>{toBn(p.total)}</span>
+                    </button>
+                ))}
+            </div>
+
+            {/* Candidate drill-down inside the party */}
+            {candidates.length > 1 && (
+                <div className="flex gap-2 overflow-x-auto pb-1 -mb-1">
+                    <button className={chipCls(pc === 'all')} onClick={() => { setPc('all'); setPage(0); }}>
+                        সব candidate
+                    </button>
+                    {candidates.map((c) => (
+                        <button
+                            key={c.candidate_user_id}
+                            className={chipCls(pc === String(c.candidate_user_id))}
+                            onClick={() => { setPc(String(c.candidate_user_id)); setPage(0); }}
+                        >
+                            {c.candidate_name} <span className={`bn ${pc === String(c.candidate_user_id) ? 'text-white/80' : 'text-gray-400'}`}>{toBn(c.total)}</span>
+                        </button>
+                    ))}
+                </div>
+            )}
+
+            {/* Search + count */}
+            <div className="flex items-center gap-3">
+                <div className="relative flex-1 max-w-md ">
+                    <i className="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm" />
+                    <input
+                        className="w-full border border-gray-300 rounded-md pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand focus:border-brand"
+                        placeholder="ভোটারের নাম / VID / canvasser খুঁজুন…"
+                        value={q}
+                        onChange={(e) => setQ(e.target.value)}
+                    />
+                    {loading && <span className="absolute right-3 top-12  -translate-y-1/2"><Spinner size="sm" /></span>}
+                </div>
+                <span className="text-sm text-gray-500 bn whitespace-nowrap">মোট {toBn(total)}টি জরিপ</span>
+            </div>
+
+            {records.length === 0 ? (
+                <EmptyState icon="fa-clipboard-list" label="এই খোঁজ/filter-এ কোনো জরিপ পাওয়া যায়নি।" />
+            ) : (
+                <div className="bg-white border border-gray-200 rounded-lg overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                        <thead className="bg-gray-50 text-gray-600 text-xs uppercase tracking-wider">
+                            <tr>
+                                <th className="px-3 py-2.5 text-left whitespace-nowrap">তারিখ</th>
+                                <th className="px-3 py-2.5 text-left">ভোটার</th>
+                                <th className="px-3 py-2.5 text-left">আসন</th>
+                                {party === 'all' && <th className="px-3 py-2.5 text-left">দল</th>}
+                                <th className="px-3 py-2.5 text-left">Candidate</th>
+                                <th className="px-3 py-2.5 text-left hidden md:table-cell">Canvasser</th>
+                                <th className="px-3 py-2.5 text-left">সমর্থন</th>
+                                <th className="px-3 py-2.5 text-left hidden sm:table-cell">Follow-up</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                            {records.map((r) => (
+                                <tr key={r.canvass_id} className="hover:bg-gray-50">
+                                    <td className="px-3 py-2.5 whitespace-nowrap text-gray-500 bn">
+                                        {r.canvass_date ? new Date(r.canvass_date).toLocaleDateString('bn-BD') : '—'}
+                                    </td>
+                                    <td className="px-3 py-2.5">
+                                        <button
+                                            type="button"
+                                            className="text-left group"
+                                            onClick={() => setHistory({ voter_id: r.voter_id, name: r.voter_name })}
+                                            title="সম্পূর্ণ cross-party ভিজিট history দেখুন"
+                                        >
+                                            <div className="font-medium text-gray-800 group-hover:text-brand group-hover:underline">
+                                                {r.voter_name || `Voter #${r.voter_id}`}
+                                            </div>
+                                            <div className="text-xs text-gray-400">
+                                                {r.sos_vid}{r.ward ? <span className="bn"> · ওয়ার্ড {r.ward}</span> : null}
+                                            </div>
+                                        </button>
+                                    </td>
+                                    <td className="px-3 py-2.5 whitespace-nowrap text-gray-600">{r.constituency_name}</td>
+                                    {party === 'all' && (
+                                        <td className="px-3 py-2.5">
+                                            {r.party_name
+                                                ? <span className="text-[11px] bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full whitespace-nowrap">{r.party_name}</span>
+                                                : <span className="text-gray-300">—</span>}
+                                        </td>
+                                    )}
+                                    <td className="px-3 py-2.5 whitespace-nowrap text-gray-800">
+                                        <i className="fas fa-user-tie text-purple-400 mr-1.5 text-xs" />
+                                        {r.candidate_name}
+                                    </td>
+                                    <td className="px-3 py-2.5 whitespace-nowrap text-gray-600 hidden md:table-cell">{r.canvasser_name}</td>
+                                    <td className="px-3 py-2.5">
+                                        <div className="flex items-center gap-2">
+                                            <SupportBadge level={r.support_level} rating={null} />
+                                            <Stars rating={r.support_rating} />
+                                        </div>
+                                    </td>
+                                    <td className="px-3 py-2.5 hidden sm:table-cell">
+                                        {r.follow_up_needed
+                                            ? <span className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full">প্রয়োজন</span>
+                                            : <span className="text-gray-300">—</span>}
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+
+            {pages > 1 && (
+                <div className="flex items-center justify-between text-sm">
+                    <button
+                        className="border border-gray-300 rounded-md px-3 py-1.5 hover:bg-gray-50 disabled:opacity-40 disabled:hover:bg-white"
+                        disabled={page === 0}
+                        onClick={() => setPage((p) => p - 1)}
+                    >
+                        <i className="fas fa-chevron-left mr-1" /> আগের
+                    </button>
+                    <span className="text-gray-500 bn">পৃষ্ঠা {toBn(page + 1)} / {toBn(pages)}</span>
+                    <button
+                        className="border border-gray-300 rounded-md px-3 py-1.5 hover:bg-gray-50 disabled:opacity-40 disabled:hover:bg-white"
+                        disabled={page + 1 >= pages}
+                        onClick={() => setPage((p) => p + 1)}
+                    >
+                        পরের <i className="fas fa-chevron-right ml-1" />
+                    </button>
+                </div>
             )}
 
             {history && (

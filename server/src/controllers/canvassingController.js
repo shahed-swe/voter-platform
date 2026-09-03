@@ -93,8 +93,9 @@ function partyScope(req) {
         .filter((p) => p.role === 'tenant_admin')
         .map((p) => p.id);
     if (req.user?.is_super_admin) {
-        if (!req.query.party_id) throw new ValidationError('party_id required');
-        return [req.query.party_id];
+        // With ?party_id= the super admin inspects one party; without it the
+        // scope is NULL = every party (the Main Admin's platform-wide view).
+        return req.query.party_id ? [req.query.party_id] : null;
     }
     if (!myParties.length) throw new ForbiddenError('Political Admin only');
     return myParties;
